@@ -1,4 +1,4 @@
-const API_BASE = '/api';
+const API_BASE = 'https://learnx-backend-heqj.onrender.com/api';
 
 interface ApiOptions extends Omit<RequestInit, 'body'> {
   body?: any;
