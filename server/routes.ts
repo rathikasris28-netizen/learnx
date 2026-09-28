@@ -74,12 +74,13 @@ apiRouter.get('/events', (req: Request, res: Response) => {
 });
 
 // Real-time sync polling endpoint (fallback if SSE not supported)
-apiRouter.get('/sync/events', (req: Request, res: Response) => {
-  const userId = req.headers['x-user-id'] as string;
-  if (!userId) {
-    res.json({ success: true, timestamp: Date.now() });
+apiRouter.get('/sync/events', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
     return;
   }
+  const userId = user.user_id;
   const pendingRequests = db.prepare(`
     SELECT s.*, p.full_name as other_party_name, sk.name as skill_name
     FROM sessions s
@@ -103,22 +104,46 @@ apiRouter.get('/sync/events', (req: Request, res: Response) => {
 });
 
 // Helper: Extract current authenticated user
-function getAuthenticatedUser(req: Request) {
-  const userId = req.headers['x-user-id'] as string;
-  if (!userId) return null;
-  return db.prepare(`SELECT * FROM profiles WHERE user_id = ?`).get(userId) as any;
+async function getAuthenticatedUser(req: Request) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+
+  const token = authHeader.substring(7).trim();
+  if (!token) return null;
+
+  try {
+    const { data, error } = await supabaseAnon.auth.getUser(token);
+
+    if (error || !data.user) {
+      return null;
+    }
+
+    const userId = data.user.id;
+
+    const profile = db
+      .prepare(`SELECT * FROM profiles WHERE user_id = ?`)
+      .get(userId) as any;
+
+    return profile || null;
+  } catch {
+    return null;
+  }
 }
 
 // -------------------------------------------------------------
 // 1. AUTHENTICATION & PROFILE
 // -------------------------------------------------------------
 
-apiRouter.post('/auth/register', async (req: Request, res: Response) => {
+type RegistrationRole = 'LEARNER' | 'KNOWLEDGE_SHARER';
+
+async function registerAccount(req: Request, res: Response, role: RegistrationRole) {
   try {
     const {
       full_name,
       email,
-      mobile,
       password,
       age_group,
       city,
@@ -126,109 +151,138 @@ apiRouter.post('/auth/register', async (req: Request, res: Response) => {
       preferred_language,
       education_status,
       profile_photo,
-      bio
+      terms_accepted
     } = req.body;
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const passwordValid = typeof password === 'string'
+      && password.length >= 8
+      && /[A-Z]/.test(password)
+      && /[a-z]/.test(password)
+      && /\d/.test(password)
+      && /[^A-Za-z0-9]/.test(password);
+    const allowedAgeGroups = ['Under 18', '18-24', '25-34', '35-44', '45-54', '55+'];
+    const allowedLanguages = ['English', 'Tamil', 'Hindi', 'Telugu', 'Malayalam', 'Kannada', 'Other'];
+    const allowedEducationStatuses = ['School Student', 'College Student', 'Graduate', 'Working Professional', 'Self-Employed', 'Job Seeker', 'Other'];
 
-    if (!email || !password || !full_name) {
-      res.status(400).json({ error: 'Full name, email, and password are required.' });
+    if (!full_name?.trim() || !cleanEmail || !passwordValid || !age_group || !city?.trim() || !state?.trim()
+      || !allowedAgeGroups.includes(age_group) || !allowedLanguages.includes(preferred_language)
+      || !allowedEducationStatuses.includes(education_status) || terms_accepted !== true) {
+      res.status(400).json({ error: 'Complete all required fields, use a strong password, and accept the Terms & Conditions and Privacy Policy.' });
       return;
     }
 
-    // Check if email already registered locally
-    const existing = db.prepare(`SELECT id FROM profiles WHERE email = ?`).get(email.toLowerCase());
+    const existing = db.prepare('SELECT id FROM profiles WHERE email = ?').get(cleanEmail);
     if (existing) {
-      res.status(400).json({ error: 'An account with this email already exists.' });
+      res.status(409).json({ error: 'An account with this email already exists.' });
       return;
     }
 
-    let supabaseUserId: string = crypto.randomUUID();
-    let emailConfirmed = false;
-
-    // Register with Supabase Auth
-    try {
-      const supaRes = await supabaseAdmin.auth.admin.createUser({
-        email: email.toLowerCase(),
-        password,
-        email_confirm: false,
-        user_metadata: {
-          full_name,
-          mobile,
-          age_group,
-          city,
-          state,
-          preferred_language: preferred_language || 'English',
-          education_status
-        }
-      });
-      if (supaRes.data?.user) {
-        supabaseUserId = supaRes.data.user.id;
-        emailConfirmed = !!supaRes.data.user.confirmed_at;
+    const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
+      email: cleanEmail,
+      password,
+      email_confirm: true,
+      app_metadata: { learnx_role: role },
+      user_metadata: {
+        full_name: full_name.trim(),
+        age_group,
+        city: city.trim(),
+        state: state.trim(),
+        preferred_language,
+        education_status
       }
-    } catch {
-      // Supabase admin fallback
+    });
+    if (createError || !created.user) {
+      const duplicateEmail = /already|registered|exists/i.test(createError?.message || '');
+      res.status(duplicateEmail ? 409 : 400).json({ error: duplicateEmail ? 'An account with this email already exists.' : createError?.message || 'Supabase account creation failed.' });
+      return;
     }
 
-    // Insert into local SQLite database
-    const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
-    db.prepare(`
-      INSERT INTO profiles (
-        id, user_id, full_name, email, mobile, password_hash, age_group, city, state,
-        preferred_language, education_status, profile_photo, bio, role, is_email_verified, onboarding_completed
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'LEARNER', ?, 0)
-    `).run(
-      supabaseUserId,
-      supabaseUserId,
-      full_name,
-      email.toLowerCase(),
-      mobile || '',
-      passwordHash,
-      age_group || '18-24',
-      city || '',
-      state || '',
-      preferred_language || 'English',
-      education_status || '',
-      profile_photo || '',
-      bio || '',
-      emailConfirmed ? 1 : 0
-    );
+    const supabaseUserId = created.user.id;
+    const { data: signedIn, error: signInError } = await supabaseAnon.auth.signInWithPassword({ email: cleanEmail, password });
+    if (signInError || !signedIn.session) {
+      await supabaseAdmin.auth.admin.deleteUser(supabaseUserId).catch(() => {});
+      res.status(503).json({ error: 'Account created, but LearnX could not establish a session. Please sign in to continue.' });
+      return;
+    }
 
-    // Initialize Time Credit Wallet
-    db.prepare(`INSERT OR IGNORE INTO time_credit_accounts (id, user_id, balance, total_earned, total_spent) VALUES (?, ?, 0, 0, 0)`)
-      .run('tc-' + supabaseUserId, supabaseUserId);
+    const acceptedAt = new Date().toISOString();
+    let welcomeBonus = 0;
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      db.prepare(`
+        INSERT INTO profiles (
+          id, user_id, full_name, email, age_group, city, state, preferred_language,
+          education_status, profile_photo, role, is_email_verified, onboarding_completed, terms_accepted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
+      `).run(
+        supabaseUserId, supabaseUserId, full_name.trim(), cleanEmail, age_group, city.trim(), state.trim(),
+        preferred_language, education_status, typeof profile_photo === 'string' ? profile_photo.trim() : '', role, acceptedAt
+      );
+      db.prepare('INSERT OR IGNORE INTO time_credit_accounts (id, user_id, balance, total_earned, total_spent) VALUES (?, ?, 0, 0, 0)')
+        .run(`tc-${supabaseUserId}`, supabaseUserId);
 
-    // Initialize Availability
-    db.prepare(`INSERT OR IGNORE INTO user_availability (id, user_id, status, available_from, available_until) VALUES (?, ?, 'ACTIVE', '18:00:00', '21:00:00')`)
-      .run('av-' + supabaseUserId, supabaseUserId);
+      if (role === 'LEARNER') {
+        const bonus = db.prepare(`
+          INSERT OR IGNORE INTO credit_transactions (id, user_id, amount, transaction_type, status, description)
+          VALUES (?, ?, 5, 'WELCOME_BONUS', 'COMPLETED', 'New Learner Welcome Bonus')
+        `).run(crypto.randomUUID(), supabaseUserId);
+        if (Number(bonus.changes) === 1) {
+          db.prepare(`UPDATE time_credit_accounts SET balance = balance + 5, total_earned = total_earned + 5, updated_at = ? WHERE user_id = ?`)
+            .run(acceptedAt, supabaseUserId);
+          welcomeBonus = 5;
+        }
+      }
 
-    // Initialize Trust Score
-    db.prepare(`INSERT OR IGNORE INTO trust_scores (id, user_id, score, reliability_score, verification_level) VALUES (?, ?, 85, 90, 'COMMUNITY_VERIFIED')`)
-      .run('ts-' + supabaseUserId, supabaseUserId);
+      db.prepare("INSERT OR IGNORE INTO user_availability (id, user_id, status, available_from, available_until) VALUES (?, ?, 'ACTIVE', '18:00:00', '21:00:00')")
+        .run(`av-${supabaseUserId}`, supabaseUserId);
+      db.prepare("INSERT OR IGNORE INTO trust_scores (id, user_id, score, reliability_score, verification_level) VALUES (?, ?, 85, 90, 'COMMUNITY_VERIFIED')")
+        .run(`ts-${supabaseUserId}`, supabaseUserId);
+      db.prepare(`INSERT INTO notifications (id, user_id, title, message, type, link) VALUES (?, ?, ?, ?, 'SYSTEM', '/onboarding')`)
+        .run(crypto.randomUUID(), supabaseUserId, 'Welcome to LearnX!', 'Complete your onboarding to personalize your experience.');
+      db.prepare(`INSERT INTO audit_logs (id, actor_id, action, target_type, target_id, details_json) VALUES (?, ?, 'USER_REGISTER', 'USER', ?, ?)`)
+        .run(crypto.randomUUID(), supabaseUserId, supabaseUserId, JSON.stringify({ email: cleanEmail, role }));
+      db.exec('COMMIT');
+    } catch (databaseError) {
+      db.exec('ROLLBACK');
+      await supabaseAdmin.auth.admin.deleteUser(supabaseUserId).catch(() => {});
+      throw databaseError;
+    }
 
-    // Welcome Notification
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, type, link)
-      VALUES (?, ?, ?, ?, 'SYSTEM', '/onboarding')
-    `).run(
-      crypto.randomUUID(),
-      supabaseUserId,
-      'Welcome to LearnX!',
-      'Verify your email to complete onboarding and start peer knowledge exchange.'
-    );
-
-    // Audit log
-    db.prepare(`INSERT INTO audit_logs (id, actor_id, action, target_type, target_id, details_json) VALUES (?, ?, 'USER_REGISTER', 'USER', ?, ?)`)
-      .run(crypto.randomUUID(), supabaseUserId, supabaseUserId, JSON.stringify({ email }));
-
+    const profile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(supabaseUserId) as any;
+    const wallet = db.prepare('SELECT * FROM time_credit_accounts WHERE user_id = ?').get(supabaseUserId) as any;
     res.status(201).json({
       success: true,
-      message: 'Registration successful. Please verify your email address.',
+      message: 'Registration successful.',
       user_id: supabaseUserId,
-      email_confirmed: emailConfirmed
+      role,
+      welcome_bonus: welcomeBonus,
+      email_confirmed: true,
+      token: signedIn.session.access_token,
+      user: {
+        id: profile.user_id,
+        user_id: profile.user_id,
+        email: profile.email,
+        full_name: profile.full_name,
+        role: profile.role,
+        is_email_verified: true,
+        onboarding_completed: false,
+        preferred_language: profile.preferred_language,
+        city: profile.city,
+        state: profile.state,
+        profile_photo: profile.profile_photo,
+        wallet_balance: wallet.balance,
+        total_earned_credits: wallet.total_earned,
+        total_spent_credits: wallet.total_spent
+      }
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to complete registration.' });
   }
-});
+}
+
+apiRouter.post('/auth/register', async (req: Request, res: Response) => registerAccount(req, res, 'LEARNER'));
+apiRouter.post('/auth/register/learner', async (req: Request, res: Response) => registerAccount(req, res, 'LEARNER'));
+apiRouter.post('/auth/register/mentor', async (req: Request, res: Response) => registerAccount(req, res, 'KNOWLEDGE_SHARER'));
 
 apiRouter.post('/auth/login', async (req: Request, res: Response) => {
   try {
@@ -239,39 +293,28 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    let profile = db.prepare(`SELECT * FROM profiles WHERE email = ?`).get(cleanEmail) as any;
-
-    // Check with Supabase Auth
-    let supaSession: any = null;
+    let authData: any;
     try {
       const authRes = await supabaseAnon.auth.signInWithPassword({
         email: cleanEmail,
         password
       });
-      if (authRes.data?.session) {
-        supaSession = authRes.data.session;
+      if (authRes.error || !authRes.data.session) {
+        res.status(401).json({ error: 'Invalid email or password.' });
+        return;
       }
+      authData = authRes.data;
     } catch {
-      // Continue to local verification
+      res.status(503).json({ error: 'Authentication service is unavailable.' });
+      return;
     }
 
-    // Verify password locally if Supabase direct call did not return a session
-    if (!supaSession) {
-      if (!profile) {
-        res.status(401).json({ error: 'Invalid email or password.' });
-        return;
-      }
-      const hashed = crypto.createHash('sha256').update(password).digest('hex');
-      if (profile.password_hash && profile.password_hash !== hashed) {
-        res.status(401).json({ error: 'Invalid email or password.' });
-        return;
-      }
-    }
-
-    // If profile not yet in local DB, fetch from Supabase and insert
-    if (!profile && supaSession?.user) {
-      const u = supaSession.user;
+    let profile = db.prepare('SELECT * FROM profiles WHERE email = ?').get(cleanEmail) as any;
+    if (!profile && authData.user) {
+      const u = authData.user;
       const meta = u.user_metadata || {};
+      const requestedRole = u.app_metadata?.learnx_role;
+      const profileRole = requestedRole === 'KNOWLEDGE_SHARER' ? 'KNOWLEDGE_SHARER' : 'LEARNER';
       db.prepare(`
         INSERT INTO profiles (
           id, user_id, full_name, email, age_group, city, state, preferred_language, role, is_email_verified, onboarding_completed
@@ -285,10 +328,14 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
         meta.city || '',
         meta.state || '',
         meta.preferred_language || 'English',
-        cleanEmail === 'rathikasris28@gmail.com' ? 'ADMIN' : 'LEARNER',
+        cleanEmail === 'rathikasris28@gmail.com' ? 'ADMIN' : profileRole,
         u.confirmed_at ? 1 : 0
       );
       profile = db.prepare(`SELECT * FROM profiles WHERE user_id = ?`).get(u.id);
+    }
+    if (!profile) {
+      res.status(401).json({ error: 'Account profile is unavailable.' });
+      return;
     }
 
     // Ensure wallet exists
@@ -308,6 +355,8 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
         role: profile.role,
         is_email_verified: profile.is_email_verified === 1,
         onboarding_completed: profile.onboarding_completed === 1,
+        total_earned_credits: wallet?.total_earned ?? 0,
+        total_spent_credits: wallet?.total_spent ?? 0,
         preferred_language: profile.preferred_language,
         city: profile.city,
         state: profile.state,
@@ -316,23 +365,25 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
         wallet_balance: wallet?.balance ?? 0,
         availability: availability?.status ?? 'ACTIVE'
       },
-      token: supaSession?.access_token || 'local_session_' + profile.user_id
+      token: authData.session.access_token
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Login failed.' });
   }
 });
 
-apiRouter.post('/auth/verify-email', (req: Request, res: Response) => {
-  const { user_id, email } = req.body;
-  if (!user_id && !email) {
-    res.status(400).json({ error: 'User ID or Email is required.' });
+apiRouter.post('/auth/verify-email', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
     return;
   }
-
-  const query = user_id ? 'UPDATE profiles SET is_email_verified = 1 WHERE user_id = ?' : 'UPDATE profiles SET is_email_verified = 1 WHERE email = ?';
-  db.prepare(query).run(user_id || email.toLowerCase());
-
+  const { user_id, email } = req.body;
+  if ((user_id && user_id !== user.user_id) || (email && email.toLowerCase() !== user.email.toLowerCase())) {
+    res.status(403).json({ error: 'You can only verify your own account.' });
+    return;
+  }
+  db.prepare('UPDATE profiles SET is_email_verified = 1 WHERE user_id = ?').run(user.user_id);
   res.json({ success: true, message: 'Email verified successfully.' });
 });
 
@@ -353,8 +404,8 @@ apiRouter.post('/auth/resend-verification', async (req: Request, res: Response) 
   res.json({ success: true, message: 'Verification link resent to your email address.' });
 });
 
-apiRouter.get('/auth/me', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/auth/me', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -394,8 +445,8 @@ apiRouter.get('/auth/me', (req: Request, res: Response) => {
 });
 
 // Update Profile
-apiRouter.put('/profile', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.put('/profile', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -477,17 +528,30 @@ apiRouter.get('/profile/:id', (req: Request, res: Response) => {
 // 2. ONBOARDING
 // -------------------------------------------------------------
 
-apiRouter.post('/onboarding', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/onboarding', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
 
-  const { learn_skills, share_skills, availability, bio } = req.body;
+  const {
+    learn_skills, share_skills, availability, bio, learning_goal, target_skill_level,
+    learning_schedule, learning_interests, preferred_language, mentor_experience, mentor_languages
+  } = req.body;
+  const isMentor = user.role === 'KNOWLEDGE_SHARER';
+
+  if (!isMentor && (!Array.isArray(learn_skills) || learn_skills.length === 0 || typeof learning_goal !== 'string' || !learning_goal.trim())) {
+    res.status(400).json({ error: 'Select at least one learning skill and provide a learning goal.' });
+    return;
+  }
+  if (isMentor && (!Array.isArray(share_skills) || share_skills.length === 0)) {
+    res.status(400).json({ error: 'Select at least one skill you can share.' });
+    return;
+  }
 
   // Insert learning skills
-  if (Array.isArray(learn_skills)) {
+  if (!isMentor && Array.isArray(learn_skills)) {
     const insertLearn = db.prepare("INSERT OR REPLACE INTO user_skills (id, user_id, skill_id, skill_type, skill_level) VALUES (?, ?, ?, 'LEARN', ?)");
     for (const ls of learn_skills) {
       if (ls.skill_id && ls.level) {
@@ -495,16 +559,41 @@ apiRouter.post('/onboarding', (req: Request, res: Response) => {
         // Also ensure learning progress record exists
         db.prepare(`INSERT OR IGNORE INTO learning_progress (id, user_id, skill_id, progress_percentage) VALUES (?, ?, ?, 0)`)
           .run(crypto.randomUUID(), user.user_id, ls.skill_id);
+        db.prepare(`
+          INSERT INTO learning_goals (id, user_id, skill_id, goal_text, target_level, preferred_schedule)
+          SELECT ?, ?, ?, ?, ?, ?
+          WHERE NOT EXISTS (SELECT 1 FROM learning_goals WHERE user_id = ? AND skill_id = ? AND goal_text = ?)
+        `).run(
+          crypto.randomUUID(), user.user_id, ls.skill_id, learning_goal.trim(), target_skill_level || 'INTERMEDIATE',
+          learning_schedule || '', user.user_id, ls.skill_id, learning_goal.trim()
+        );
       }
     }
   }
 
   // Insert sharing skills
-  if (Array.isArray(share_skills)) {
-    const insertShare = db.prepare("INSERT OR REPLACE INTO user_skills (id, user_id, skill_id, skill_type, skill_level) VALUES (?, ?, ?, 'SHARE', ?)");
+  if (isMentor && Array.isArray(share_skills)) {
+    const insertShare = db.prepare(`
+      INSERT INTO user_skills (id, user_id, skill_id, skill_type, skill_level, experience, languages_json, skill_description, beginner_friendly, skill_proof)
+      VALUES (?, ?, ?, 'SHARE', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, skill_id, skill_type) DO UPDATE SET
+        skill_level = excluded.skill_level, experience = excluded.experience, languages_json = excluded.languages_json,
+        skill_description = excluded.skill_description, beginner_friendly = excluded.beginner_friendly, skill_proof = excluded.skill_proof
+    `);
     for (const ss of share_skills) {
-      if (ss.skill_id && ss.level) {
-        insertShare.run(crypto.randomUUID(), user.user_id, ss.skill_id, ss.level);
+      const skillExists = ss.skill_id && db.prepare('SELECT id FROM skills WHERE id = ? AND is_active = 1').get(ss.skill_id);
+      if (skillExists && ['BEGINNER', 'ELEMENTARY', 'INTERMEDIATE', 'ADVANCED'].includes(ss.level)
+        && typeof ss.experience === 'string' && ss.experience.trim()
+        && typeof ss.description === 'string' && ss.description.trim()
+        && Array.isArray(ss.languages) && ss.languages.length > 0) {
+        insertShare.run(
+          crypto.randomUUID(), user.user_id, ss.skill_id, ss.level, ss.experience.trim(),
+          JSON.stringify(ss.languages), ss.description.trim(), ss.beginner_friendly ? 1 : 0,
+          typeof ss.skill_proof === 'string' ? ss.skill_proof.trim() : ''
+        );
+      } else {
+        res.status(400).json({ error: 'Complete each mentor skill’s level, experience, language, and description.' });
+        return;
       }
     }
   }
@@ -529,8 +618,27 @@ apiRouter.post('/onboarding', (req: Request, res: Response) => {
   }
 
   // Mark onboarding complete
-  db.prepare(`UPDATE profiles SET onboarding_completed = 1, bio = COALESCE(?, bio) WHERE user_id = ?`)
-    .run(bio || null, user.user_id);
+  db.prepare(`
+    UPDATE profiles SET onboarding_completed = 1, bio = COALESCE(?, bio),
+      learning_goal = CASE WHEN role = 'LEARNER' THEN ? ELSE learning_goal END,
+      target_skill_level = CASE WHEN role = 'LEARNER' THEN ? ELSE target_skill_level END,
+      learning_schedule = CASE WHEN role = 'LEARNER' THEN ? ELSE learning_schedule END,
+      learning_interests_json = CASE WHEN role = 'LEARNER' THEN ? ELSE learning_interests_json END,
+      preferred_language = COALESCE(?, preferred_language),
+      mentor_experience = CASE WHEN role = 'KNOWLEDGE_SHARER' THEN ? ELSE mentor_experience END,
+      mentor_languages_json = CASE WHEN role = 'KNOWLEDGE_SHARER' THEN ? ELSE mentor_languages_json END
+    WHERE user_id = ?
+  `).run(
+    bio || null,
+    typeof learning_goal === 'string' ? learning_goal.trim() : null,
+    target_skill_level || null,
+    learning_schedule || null,
+    JSON.stringify(Array.isArray(learning_interests) ? learning_interests : typeof learning_interests === 'string' ? learning_interests.split(',').map((item: string) => item.trim()).filter(Boolean) : []),
+    preferred_language || null,
+    typeof mentor_experience === 'string' ? mentor_experience.trim() : null,
+    JSON.stringify(Array.isArray(mentor_languages) ? mentor_languages : []),
+    user.user_id
+  );
 
   res.json({ success: true, message: 'Onboarding completed successfully!' });
 });
@@ -597,8 +705,9 @@ apiRouter.get('/skills/:id', (req: Request, res: Response) => {
 
 // Natural Language AI Search
 apiRouter.post('/search/nl', async (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+  const user = await getAuthenticatedUser(req);
   const currentUserId = user ? user.user_id : 'anonymous';
+
   const { query } = req.body;
 
   if (!query || typeof query !== 'string') {
@@ -623,8 +732,8 @@ apiRouter.post('/search/nl', async (req: Request, res: Response) => {
 });
 
 // AI Matching Recommendations
-apiRouter.get('/matching', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/matching', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   const currentUserId = user ? user.user_id : 'anonymous';
   const { skill_id, skill_name, level, language, time } = req.query;
 
@@ -647,8 +756,8 @@ apiRouter.get('/matching', (req: Request, res: Response) => {
 // 4. AVAILABILITY SYSTEM
 // -------------------------------------------------------------
 
-apiRouter.get('/availability', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/availability', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -658,8 +767,8 @@ apiRouter.get('/availability', (req: Request, res: Response) => {
   res.json({ availability: availability || { status: 'ACTIVE', available_from: '18:00:00', available_until: '21:00:00' } });
 });
 
-apiRouter.post('/availability', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/availability', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -697,8 +806,8 @@ apiRouter.post('/availability', (req: Request, res: Response) => {
 // 5. SESSION BOOKING & LIFECYCLE
 // -------------------------------------------------------------
 
-apiRouter.get('/sessions', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/sessions', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -725,8 +834,8 @@ apiRouter.get('/sessions', (req: Request, res: Response) => {
   res.json({ sessions });
 });
 
-apiRouter.get('/sessions/:id', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/sessions/:id', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -758,8 +867,8 @@ apiRouter.get('/sessions/:id', (req: Request, res: Response) => {
 });
 
 // Book / Request a Session
-apiRouter.post('/sessions/request', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/sessions/request', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -792,17 +901,13 @@ apiRouter.post('/sessions/request', (req: Request, res: Response) => {
   }
 
   const sessionId = crypto.randomUUID();
-  const roomId = `learnx-${sessionId.slice(0, 8)}`;
-  const meetingProvider = req.body.meeting_provider === 'GOOGLE_MEET' ? 'GOOGLE_MEET' : 'BUILTIN';
-  const meetLink = meetingProvider === 'GOOGLE_MEET'
-    ? (req.body.meet_link?.trim() || `https://meet.google.com/lx-${sessionId.slice(0, 3)}-${sessionId.slice(4, 8)}`)
-    : '';
+  const roomId = `learnx-session-${sessionId}`;
 
   db.prepare(`
     INSERT INTO sessions (
       id, learner_id, knowledge_sharer_id, skill_id, session_date, start_time, end_time,
-      duration_minutes, status, learning_goal, room_id, meeting_provider, meet_link
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 60, 'REQUESTED', ?, ?, ?, ?)
+      duration_minutes, status, learning_goal, room_id, meeting_provider, meet_link, session_stage
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 60, 'REQUESTED', ?, ?, 'BUILTIN', '', 'REQUESTED')
   `).run(
     sessionId,
     user.user_id,
@@ -812,14 +917,11 @@ apiRouter.post('/sessions/request', (req: Request, res: Response) => {
     start_time,
     end_time || '19:00:00',
     learning_goal,
-    roomId,
-    meetingProvider,
-    meetLink
+    roomId
   );
 
   // Send real notification to Knowledge Sharer
   const skill = db.prepare(`SELECT name FROM skills WHERE id = ?`).get(skill_id) as any;
-  const meetNote = meetingProvider === 'GOOGLE_MEET' ? ' (via Google Meet)' : '';
   db.prepare(`
     INSERT INTO notifications (id, user_id, title, message, type, link)
     VALUES (?, ?, ?, ?, 'SESSION_REQUEST', ?)
@@ -827,7 +929,7 @@ apiRouter.post('/sessions/request', (req: Request, res: Response) => {
     crypto.randomUUID(),
     knowledge_sharer_id,
     'New Learning Request!',
-    `${user.full_name} has requested a 1-on-1 session for ${skill?.name || 'a skill'}${meetNote} on ${session_date} at ${start_time}.`,
+    `${user.full_name} has requested a 1-on-1 LearnX session for ${skill?.name || 'a skill'} on ${session_date} at ${start_time}.`,
     `/sessions`
   );
 
@@ -839,52 +941,13 @@ apiRouter.post('/sessions/request', (req: Request, res: Response) => {
     message: 'Session request sent successfully! Awaiting knowledge sharer confirmation.',
     session_id: sessionId,
     room_id: roomId,
-    meeting_provider: meetingProvider,
-    meet_link: meetLink
+    meeting_provider: 'BUILTIN'
   });
 });
 
-// Configure or update Google Meet for an existing session
-apiRouter.post('/sessions/:id/google-meet', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
-  if (!user) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-
-  const session = db.prepare('SELECT * FROM sessions WHERE id = ? AND (learner_id = ? OR knowledge_sharer_id = ?)').get(req.params.id, user.user_id, user.user_id) as any;
-  if (!session) {
-    res.status(404).json({ error: 'Session not found.' });
-    return;
-  }
-
-  const customLink = req.body.meet_link?.trim();
-  const meetLink = customLink || `https://meet.google.com/lx-${session.id.slice(0, 3)}-${session.id.slice(4, 8)}`;
-
-  db.prepare(`
-    UPDATE sessions
-    SET meeting_provider = 'GOOGLE_MEET', meet_link = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `).run(meetLink, session.id);
-
-  const otherId = session.learner_id === user.user_id ? session.knowledge_sharer_id : session.learner_id;
-  db.prepare(`
-    INSERT INTO notifications (id, user_id, title, message, type, link)
-    VALUES (?, ?, 'Google Meet Session Configured', ?, 'GOOGLE_MEET_ADDED', ?)
-  `).run(
-    crypto.randomUUID(),
-    otherId,
-    `${user.full_name} set up Google Meet for your upcoming session on ${session.session_date}.`,
-    `/sessions`
-  );
-
-  broadcastEvent('session_updated', { sessionId: session.id, meeting_provider: 'GOOGLE_MEET', meet_link: meetLink });
-  res.json({ success: true, meet_link: meetLink, meeting_provider: 'GOOGLE_MEET' });
-});
-
 // Sharer accepts request
-apiRouter.post('/sessions/:id/accept', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/sessions/:id/accept', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -896,7 +959,7 @@ apiRouter.post('/sessions/:id/accept', (req: Request, res: Response) => {
     return;
   }
 
-  db.prepare("UPDATE sessions SET status = 'ACCEPTED', updated_at = datetime('now') WHERE id = ?").run(session.id);
+  db.prepare("UPDATE sessions SET status = 'ACCEPTED', session_stage = 'SCHEDULED', updated_at = datetime('now') WHERE id = ?").run(session.id);
 
   // Notify learner
   db.prepare(`
@@ -914,8 +977,8 @@ apiRouter.post('/sessions/:id/accept', (req: Request, res: Response) => {
 });
 
 // Sharer rejects request
-apiRouter.post('/sessions/:id/reject', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/sessions/:id/reject', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -927,7 +990,7 @@ apiRouter.post('/sessions/:id/reject', (req: Request, res: Response) => {
     return;
   }
 
-  db.prepare("UPDATE sessions SET status = 'REJECTED', updated_at = datetime('now') WHERE id = ?").run(session.id);
+  db.prepare("UPDATE sessions SET status = 'REJECTED', session_stage = 'REJECTED', updated_at = datetime('now') WHERE id = ?").run(session.id);
 
   db.prepare(`
     INSERT INTO notifications (id, user_id, title, message, type, link)
@@ -939,8 +1002,8 @@ apiRouter.post('/sessions/:id/reject', (req: Request, res: Response) => {
 });
 
 // Cancel session
-apiRouter.post('/sessions/:id/cancel', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/sessions/:id/cancel', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -952,7 +1015,7 @@ apiRouter.post('/sessions/:id/cancel', (req: Request, res: Response) => {
     return;
   }
 
-  db.prepare("UPDATE sessions SET status = 'CANCELLED', updated_at = datetime('now') WHERE id = ?").run(session.id);
+  db.prepare("UPDATE sessions SET status = 'CANCELLED', session_stage = 'CANCELLED', updated_at = datetime('now') WHERE id = ?").run(session.id);
 
   const otherId = session.learner_id === user.user_id ? session.knowledge_sharer_id : session.learner_id;
   db.prepare(`
@@ -968,77 +1031,102 @@ apiRouter.post('/sessions/:id/cancel', (req: Request, res: Response) => {
   res.json({ success: true, message: 'Session cancelled.' });
 });
 
-// Join & Start session
-apiRouter.post('/sessions/:id/start', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+// Join the internal room. The session ID, not a client-provided room, determines the LiveKit room.
+apiRouter.post('/sessions/:id/join', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
 
-  const session = db.prepare(`SELECT * FROM sessions WHERE id = ? AND (learner_id = ? OR knowledge_sharer_id = ?)`).get(req.params.id, user.user_id, user.user_id) as any;
+  const session = db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(req.params.id) as any;
   if (!session) {
     res.status(404).json({ error: 'Session not found.' });
     return;
   }
 
-  if (session.status === 'ACCEPTED') {
-    db.prepare("UPDATE sessions SET status = 'IN_PROGRESS', updated_at = datetime('now') WHERE id = ?").run(session.id);
-    // Mark sharer as IN_CLASS
-    db.prepare("UPDATE user_availability SET status = 'IN_CLASS', updated_at = datetime('now') WHERE user_id = ?")
-      .run(session.knowledge_sharer_id);
-    broadcastEvent('session_updated', { sessionId: session.id, status: 'IN_PROGRESS' });
-  }
-
-  res.json({ success: true, status: 'IN_PROGRESS', room_id: session.room_id });
-});
-
-// -------------------------------------------------------------
-// 6. LIVEKIT TOKEN GENERATION
-// -------------------------------------------------------------
-
-apiRouter.get('/livekit/token', async (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
-  if (!user) {
-    res.status(401).json({ error: 'Unauthorized' });
+  const isLearner = session.learner_id === user.user_id;
+  const isSharer = session.knowledge_sharer_id === user.user_id;
+  if (!isLearner && !isSharer) {
+    res.status(403).json({ error: 'Not authorized for this session.' });
     return;
   }
 
-  const room = req.query.room as string;
-  if (!room) {
-    res.status(400).json({ error: 'Room parameter is required' });
+  if (!['ACCEPTED', 'IN_PROGRESS'].includes(session.status) || session.ended_at) {
+    res.status(409).json({ error: 'This session is not open for joining.' });
     return;
   }
 
   try {
+    const roomName = `learnx-session-${session.id}`;
     const token = await createLiveKitToken({
-      roomName: room,
+      roomName,
       participantIdentity: user.user_id,
       participantName: user.full_name
     });
 
     res.json({
       token,
-      livekit_url: LIVEKIT_URL
+      livekit_url: LIVEKIT_URL,
+      room_name: roomName,
+      session
     });
   } catch (err: any) {
-    res.status(500).json({ error: 'Failed to generate secure LiveKit token: ' + err.message });
+    res.status(500).json({ error: 'Unable to join the LearnX session room.' });
   }
+});
+
+apiRouter.post('/sessions/:id/connected', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id) as any;
+  if (!session) {
+    res.status(404).json({ error: 'Session not found.' });
+    return;
+  }
+  const isLearner = session.learner_id === user.user_id;
+  if (!isLearner && session.knowledge_sharer_id !== user.user_id) {
+    res.status(403).json({ error: 'Not authorized for this session.' });
+    return;
+  }
+  if (!['ACCEPTED', 'IN_PROGRESS'].includes(session.status) || session.ended_at) {
+    res.status(409).json({ error: 'This session is not open for participant connections.' });
+    return;
+  }
+
+  const connectedAt = new Date().toISOString();
+  const joinedField = isLearner ? 'learner_joined_at' : 'sharer_joined_at';
+  db.prepare(`UPDATE sessions SET ${joinedField} = COALESCE(${joinedField}, ?), updated_at = ? WHERE id = ?`)
+    .run(connectedAt, connectedAt, session.id);
+  const connectedSession = db.prepare('SELECT * FROM sessions WHERE id = ?').get(session.id) as any;
+  if (connectedSession.learner_joined_at && connectedSession.sharer_joined_at && !connectedSession.started_at) {
+    db.prepare(`
+      UPDATE sessions
+      SET status = 'IN_PROGRESS', session_stage = 'STARTED', started_at = ?, updated_at = ?
+      WHERE id = ? AND started_at IS NULL
+    `).run(connectedAt, connectedAt, session.id);
+    db.prepare("UPDATE user_availability SET status = 'IN_CLASS', updated_at = datetime('now') WHERE user_id = ?")
+      .run(session.knowledge_sharer_id);
+    broadcastEvent('session_updated', { sessionId: session.id, status: 'IN_PROGRESS', session_stage: 'STARTED' });
+  }
+  res.json({ success: true, session: db.prepare('SELECT * FROM sessions WHERE id = ?').get(session.id) });
 });
 
 // -------------------------------------------------------------
 // 7. SESSION COMPLETION & TIME CREDIT TRANSACTION
 // -------------------------------------------------------------
 
-apiRouter.post('/sessions/:id/confirm-completion', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/sessions/:id/end', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
 
-  const sessionId = req.params.id;
-  const session = db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as any;
+  const session = db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(req.params.id) as any;
 
   if (!session) {
     res.status(404).json({ error: 'Session not found.' });
@@ -1050,117 +1138,208 @@ apiRouter.post('/sessions/:id/confirm-completion', (req: Request, res: Response)
     return;
   }
 
-  let learnerConfirmed = session.learner_confirmed === 1;
-  let sharerConfirmed = session.sharer_confirmed === 1;
-
-  if (session.learner_id === user.user_id) {
-    learnerConfirmed = true;
-    db.prepare(`UPDATE sessions SET learner_confirmed = 1 WHERE id = ?`).run(sessionId);
-  } else {
-    sharerConfirmed = true;
-    db.prepare(`UPDATE sessions SET sharer_confirmed = 1 WHERE id = ?`).run(sessionId);
+  if (!session.started_at || !['STARTED', 'COMPLETED'].includes(session.session_stage)) {
+    res.status(409).json({ error: 'The session has not started.' });
+    return;
   }
 
-  // Check if both participants confirmed
-  if (learnerConfirmed && sharerConfirmed) {
-    if (session.credit_awarded === 1) {
-      res.json({ success: true, message: 'Session already completed and credit awarded.', completed: true });
+  if (!session.ended_at) {
+    const endedAt = new Date().toISOString();
+    db.prepare(`
+      UPDATE sessions SET ended_at = ?, session_stage = 'COMPLETED', updated_at = ?
+      WHERE id = ? AND ended_at IS NULL
+    `).run(endedAt, endedAt, session.id);
+    broadcastEvent('session_updated', { sessionId: session.id, session_stage: 'COMPLETED' });
+  }
+
+  res.json({ success: true, ended_at: session.ended_at || new Date().toISOString() });
+});
+
+apiRouter.post('/sessions/:id/confirm-completion', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id) as any;
+  if (!session) {
+    res.status(404).json({ error: 'Session not found.' });
+    return;
+  }
+  if (session.learner_id !== user.user_id && session.knowledge_sharer_id !== user.user_id) {
+    res.status(403).json({ error: 'Not authorized for this session.' });
+    return;
+  }
+  if (!session.ended_at || !session.started_at) {
+    res.status(409).json({ error: 'End the session after both participants have joined before confirming completion.' });
+    return;
+  }
+  const confirmationField = session.learner_id === user.user_id ? 'learner_confirmed' : 'sharer_confirmed';
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const currentSession = db.prepare('SELECT * FROM sessions WHERE id = ?').get(session.id) as any;
+    if (currentSession.session_stage === 'VERIFIED') {
+      db.exec('COMMIT');
+      res.json({ success: true, completed: true, credits_awarded: currentSession.verified_credits || 0 });
       return;
     }
 
-    // Atomic transaction for credit award
-    const awardCreditTx = () => {
-      // 1. Mark session COMPLETED and credit awarded
-      db.prepare(`
-        UPDATE sessions SET
-          status = 'COMPLETED',
-          credit_awarded = 1,
-          updated_at = datetime('now')
-        WHERE id = ?
-      `).run(sessionId);
+    db.prepare(`UPDATE sessions SET ${confirmationField} = 1, updated_at = ? WHERE id = ?`)
+      .run(new Date().toISOString(), session.id);
+    const confirmedSession = db.prepare('SELECT * FROM sessions WHERE id = ?').get(session.id) as any;
+    if (!confirmedSession.learner_confirmed || !confirmedSession.sharer_confirmed) {
+      db.exec('COMMIT');
+      broadcastEvent('session_confirmed_one_side', { sessionId: session.id, confirmedBy: user.user_id });
+      res.json({ success: true, completed: false, message: 'Confirmation received. Waiting for the other participant.' });
+      return;
+    }
 
-      // 2. Revert Sharer availability to ACTIVE
-      db.prepare("UPDATE user_availability SET status = 'ACTIVE', updated_at = datetime('now') WHERE user_id = ?")
-        .run(session.knowledge_sharer_id);
+    const startedMilliseconds = Date.parse(confirmedSession.started_at);
+    const endedMilliseconds = Date.parse(confirmedSession.ended_at);
+    const durationSeconds = Math.max(0, Math.floor((endedMilliseconds - startedMilliseconds) / 1000));
+    const credits = Math.round((durationSeconds / 3600) * 100) / 100;
+    const durationMinutes = Math.floor(durationSeconds / 60);
+    const verifiedAt = new Date().toISOString();
 
-      // 3. Create strictly audited Time Credit transaction (+1 Credit)
-      const txId = crypto.randomUUID();
+    db.prepare(`UPDATE sessions SET session_stage = 'VERIFICATION_PENDING' WHERE id = ?`).run(session.id);
+    db.prepare(`
+      UPDATE sessions SET status = 'COMPLETED', session_stage = 'VERIFIED',
+        duration_seconds = ?, verified_credits = ?, verified_at = ?, credit_awarded = ?, updated_at = ?
+      WHERE id = ? AND session_stage = 'VERIFICATION_PENDING'
+    `).run(durationSeconds, credits, verifiedAt, credits > 0 ? 1 : 0, verifiedAt, session.id);
+
+    if (credits > 0) {
       db.prepare(`
-        INSERT INTO credit_transactions (
-          id, user_id, session_id, amount, transaction_type, status, description
-        ) VALUES (?, ?, ?, 1, 'EARNED', 'COMPLETED', ?)
+        INSERT INTO credit_transactions (id, user_id, session_id, amount, transaction_type, status, description)
+        VALUES (?, ?, ?, ?, 'EARNED', 'COMPLETED', ?)
       `).run(
-        txId,
-        session.knowledge_sharer_id,
-        sessionId,
-        `1 Time Credit earned for verified 1-hour knowledge sharing (Session #${sessionId.slice(0, 8)})`
+        crypto.randomUUID(), session.knowledge_sharer_id, session.id, credits,
+        `${credits} Time Credits earned for ${durationSeconds} verified sharing seconds (Session #${session.id.slice(0, 8)})`
       );
-
-      // 4. Update Knowledge Sharer wallet
       db.prepare(`
-        UPDATE time_credit_accounts SET
-          balance = balance + 1,
-          total_earned = total_earned + 1,
-          updated_at = datetime('now')
+        UPDATE time_credit_accounts SET balance = balance + ?, total_earned = total_earned + ?, updated_at = ?
         WHERE user_id = ?
-      `).run(session.knowledge_sharer_id);
-
-      // 5. Update learner's learning progress
+      `).run(credits, credits, verifiedAt, session.knowledge_sharer_id);
       db.prepare(`
         INSERT INTO learning_progress (id, user_id, skill_id, progress_percentage, completed_sessions, total_learning_minutes)
-        VALUES (?, ?, ?, 25.0, 1, 60)
+        VALUES (?, ?, ?, 25.0, 1, ?)
         ON CONFLICT(user_id, skill_id) DO UPDATE SET
           completed_sessions = completed_sessions + 1,
-          total_learning_minutes = total_learning_minutes + 60,
+          total_learning_minutes = total_learning_minutes + ?,
           progress_percentage = MIN(100.0, progress_percentage + 25.0),
-          updated_at = datetime('now')
-      `).run(crypto.randomUUID(), session.learner_id, session.skill_id);
+          updated_at = ?
+      `).run(crypto.randomUUID(), session.learner_id, session.skill_id, durationMinutes, durationMinutes, verifiedAt);
+    }
 
-      // 6. Check & award achievements
-      const sharerSessionsCount = (db.prepare(`SELECT COUNT(*) as count FROM sessions WHERE knowledge_sharer_id = ? AND status = 'COMPLETED'`).get(session.knowledge_sharer_id) as any)?.count ?? 1;
-      if (sharerSessionsCount >= 1) {
-        db.prepare(`
-          INSERT OR IGNORE INTO user_achievements (id, user_id, achievement_id)
-          SELECT ?, ?, id FROM achievements WHERE code = 'KNOWLEDGE_SHARER'
-        `).run(crypto.randomUUID(), session.knowledge_sharer_id);
-      }
-
-      // 7. Notifications
+    db.prepare("UPDATE user_availability SET status = 'ACTIVE', updated_at = ? WHERE user_id = ?")
+      .run(verifiedAt, session.knowledge_sharer_id);
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type, link)
+      VALUES (?, ?, ?, ?, 'SESSION_COMPLETED', '/ratings')
+    `).run(crypto.randomUUID(), session.learner_id, 'Session Verified', 'Your session completion has been verified.');
+    if (credits > 0) {
       db.prepare(`
         INSERT INTO notifications (id, user_id, title, message, type, link)
-        VALUES (?, ?, 'Time Credit Awarded! (+1 TC)', 'You earned 1 Time Credit for sharing your knowledge.', 'CREDIT_EARNED', '/time-wallet')
-      `).run(crypto.randomUUID(), session.knowledge_sharer_id);
-
-      db.prepare(`
-        INSERT INTO notifications (id, user_id, title, message, type, link)
-        VALUES (?, ?, 'Session Completed!', 'Session verified. Please leave a rating for your peer mentor.', 'SESSION_COMPLETED', '/ratings')
-      `).run(crypto.randomUUID(), session.learner_id);
-    };
-
-    awardCreditTx();
-    broadcastEvent('session_completed', { sessionId, sharerId: session.knowledge_sharer_id, creditsAwarded: 1 });
-
-    res.json({
-      success: true,
-      completed: true,
-      message: 'Both participants confirmed! 1 Time Credit has been awarded to the knowledge sharer.'
-    });
-  } else {
-    broadcastEvent('session_confirmed_one_side', { sessionId, confirmedBy: user.user_id });
-    res.json({
-      success: true,
-      completed: false,
-      message: 'Confirmation received. Waiting for peer participant to confirm completion.'
-    });
+        VALUES (?, ?, ?, ?, 'CREDIT_EARNED', '/time-wallet')
+      `).run(crypto.randomUUID(), session.knowledge_sharer_id, 'Time Credits Awarded', `You earned ${credits} Time Credits for sharing your knowledge.`, '/time-wallet');
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
   }
+  const verifiedSession = db.prepare('SELECT duration_seconds, verified_credits FROM sessions WHERE id = ?').get(session.id) as any;
+  broadcastEvent('session_completed', { sessionId: session.id, sharerId: session.knowledge_sharer_id, creditsAwarded: verifiedSession.verified_credits });
+  res.json({ success: true, completed: true, credits_awarded: verifiedSession.verified_credits, duration_seconds: verifiedSession.duration_seconds });
+});
+
+apiRouter.get('/sessions/:id/chat', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const session = db.prepare('SELECT learner_id, knowledge_sharer_id FROM sessions WHERE id = ?').get(req.params.id) as any;
+  if (!session || (session.learner_id !== user.user_id && session.knowledge_sharer_id !== user.user_id)) {
+    res.status(404).json({ error: 'Session not found or access denied.' });
+    return;
+  }
+  const messages = db.prepare(`
+    SELECT m.id, m.user_id, p.full_name AS sender_name, m.message, m.created_at
+    FROM session_chat_messages m JOIN profiles p ON p.user_id = m.user_id
+    WHERE m.session_id = ? ORDER BY m.created_at DESC LIMIT 100
+  `).all(req.params.id).reverse();
+  res.json({ messages });
+});
+
+apiRouter.post('/sessions/:id/chat', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const session = db.prepare('SELECT learner_id, knowledge_sharer_id FROM sessions WHERE id = ?').get(req.params.id) as any;
+  if (!session || (session.learner_id !== user.user_id && session.knowledge_sharer_id !== user.user_id)) {
+    res.status(404).json({ error: 'Session not found or access denied.' });
+    return;
+  }
+  const message = typeof req.body.message === 'string' ? req.body.message.trim().slice(0, 4000) : '';
+  if (!message) {
+    res.status(400).json({ error: 'Message cannot be empty.' });
+    return;
+  }
+  db.prepare('INSERT INTO session_chat_messages (id, session_id, user_id, message) VALUES (?, ?, ?, ?)')
+    .run(crypto.randomUUID(), req.params.id, user.user_id, message);
+  broadcastEvent('session_chat_updated', { sessionId: req.params.id });
+  res.status(201).json({ success: true });
+});
+
+apiRouter.get('/sessions/:id/notes', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const session = db.prepare('SELECT learner_id, knowledge_sharer_id FROM sessions WHERE id = ?').get(req.params.id) as any;
+  if (!session || (session.learner_id !== user.user_id && session.knowledge_sharer_id !== user.user_id)) {
+    res.status(404).json({ error: 'Session not found or access denied.' });
+    return;
+  }
+  const note = db.prepare('SELECT content, updated_at FROM session_private_notes WHERE session_id = ? AND user_id = ?')
+    .get(req.params.id, user.user_id) as any;
+  res.json({ note: note || { content: '', updated_at: null } });
+});
+
+apiRouter.put('/sessions/:id/notes', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const session = db.prepare('SELECT learner_id, knowledge_sharer_id FROM sessions WHERE id = ?').get(req.params.id) as any;
+  if (!session || (session.learner_id !== user.user_id && session.knowledge_sharer_id !== user.user_id)) {
+    res.status(404).json({ error: 'Session not found or access denied.' });
+    return;
+  }
+  if (typeof req.body.content !== 'string' || req.body.content.length > 20000) {
+    res.status(400).json({ error: 'Notes must be text up to 20,000 characters.' });
+    return;
+  }
+  db.prepare(`
+    INSERT INTO session_private_notes (id, session_id, user_id, content, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(session_id, user_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+  `).run(crypto.randomUUID(), req.params.id, user.user_id, req.body.content, new Date().toISOString());
+  res.json({ success: true });
 });
 
 // -------------------------------------------------------------
 // 8. TIME WALLET & LEDGER
 // -------------------------------------------------------------
 
-apiRouter.get('/time-wallet', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/time-wallet', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1183,8 +1362,8 @@ apiRouter.get('/time-wallet', (req: Request, res: Response) => {
 // 9. RATINGS & REVIEWS
 // -------------------------------------------------------------
 
-apiRouter.post('/ratings', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/ratings', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1252,8 +1431,8 @@ apiRouter.post('/ratings', (req: Request, res: Response) => {
   res.status(201).json({ success: true, message: 'Rating submitted successfully.' });
 });
 
-apiRouter.get('/ratings', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/ratings', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1286,8 +1465,8 @@ apiRouter.get('/ratings', (req: Request, res: Response) => {
 // 10. LEARNING PROGRESS & AI LEARNING PLANS
 // -------------------------------------------------------------
 
-apiRouter.get('/progress', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/progress', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1310,8 +1489,8 @@ apiRouter.get('/progress', (req: Request, res: Response) => {
   });
 });
 
-apiRouter.post('/ai/learning-plan', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/ai/learning-plan', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1348,8 +1527,8 @@ apiRouter.post('/ai/learning-plan', (req: Request, res: Response) => {
 // 11. AI LEARNING ASSISTANT
 // -------------------------------------------------------------
 
-apiRouter.post('/ai/assistant', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/ai/assistant', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   const { message, topic, skill } = req.body;
 
   if (!message) {
@@ -1415,8 +1594,8 @@ apiRouter.get('/quizzes/:id', (req: Request, res: Response) => {
   res.json({ quiz, questions });
 });
 
-apiRouter.post('/quizzes/:id/submit', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/quizzes/:id/submit', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1558,8 +1737,8 @@ apiRouter.post('/quizzes/:id/submit', (req: Request, res: Response) => {
   });
 });
 
-apiRouter.get('/v1/me/quiz-attempts', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/v1/me/quiz-attempts', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1576,8 +1755,8 @@ apiRouter.get('/v1/me/quiz-attempts', (req: Request, res: Response) => {
   res.json({ success: true, attempts });
 });
 
-apiRouter.get('/v1/me/skill-assessments', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/v1/me/skill-assessments', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1597,8 +1776,8 @@ apiRouter.get('/v1/me/skill-assessments', (req: Request, res: Response) => {
 // 13. ACHIEVEMENTS & SKILLPROOF
 // -------------------------------------------------------------
 
-apiRouter.get('/achievements', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/achievements', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   const allAchievements = db.prepare(`SELECT * FROM achievements`).all() as any[];
 
   let unlockedIds: string[] = [];
@@ -1614,8 +1793,8 @@ apiRouter.get('/achievements', (req: Request, res: Response) => {
   res.json({ achievements: result });
 });
 
-apiRouter.get('/skillproof', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/skillproof', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1640,8 +1819,8 @@ apiRouter.get('/partners', (req: Request, res: Response) => {
   res.json({ partners });
 });
 
-apiRouter.post('/partners', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/partners', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1667,13 +1846,54 @@ apiRouter.post('/partners', (req: Request, res: Response) => {
 });
 
 apiRouter.get('/courses', (req: Request, res: Response) => {
-  const courses = db.prepare(`SELECT * FROM courses WHERE status = 'ACTIVE' ORDER BY created_at DESC`).all();
+  const courses = db.prepare(`
+    SELECT c.*,
+      COALESCE((SELECT p.verified FROM partners p WHERE p.id = c.partner_id OR p.user_id = c.partner_id LIMIT 1), 0) AS partner_verified
+    FROM courses c WHERE c.status = 'ACTIVE' ORDER BY c.created_at DESC
+  `).all();
   res.json({ courses });
 });
 
+apiRouter.get('/courses/:id', (req: Request, res: Response) => {
+  const course = db.prepare(`
+    SELECT c.*,
+      COALESCE((SELECT p.verified FROM partners p WHERE p.id = c.partner_id OR p.user_id = c.partner_id LIMIT 1), 0) AS partner_verified
+    FROM courses c WHERE c.id = ? AND c.status = 'ACTIVE'
+  `).get(req.params.id);
+  if (!course) {
+    res.status(404).json({ error: 'Course not found.' });
+    return;
+  }
+  res.json({ course });
+});
+
+apiRouter.get('/bootcamps', (_req: Request, res: Response) => {
+  const bootcamps = db.prepare(`
+    SELECT b.*, b.name AS title,
+      COALESCE(NULLIF(b.provider_name, ''), (SELECT p.organization_name FROM partners p WHERE p.id = b.partner_id OR p.user_id = b.partner_id LIMIT 1), '') AS provider_name,
+      COALESCE((SELECT p.verified FROM partners p WHERE p.id = b.partner_id OR p.user_id = b.partner_id LIMIT 1), 0) AS partner_verified
+    FROM bootcamps b ORDER BY b.start_date ASC
+  `).all();
+  res.json({ bootcamps });
+});
+
+apiRouter.get('/bootcamps/:id', (req: Request, res: Response) => {
+  const bootcamp = db.prepare(`
+    SELECT b.*, b.name AS title,
+      COALESCE(NULLIF(b.provider_name, ''), (SELECT p.organization_name FROM partners p WHERE p.id = b.partner_id OR p.user_id = b.partner_id LIMIT 1), '') AS provider_name,
+      COALESCE((SELECT p.verified FROM partners p WHERE p.id = b.partner_id OR p.user_id = b.partner_id LIMIT 1), 0) AS partner_verified
+    FROM bootcamps b WHERE b.id = ?
+  `).get(req.params.id);
+  if (!bootcamp) {
+    res.status(404).json({ error: 'Bootcamp not found.' });
+    return;
+  }
+  res.json({ bootcamp });
+});
+
 // Add a Partner Course
-apiRouter.post('/courses', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/courses', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1688,6 +1908,9 @@ apiRouter.post('/courses', (req: Request, res: Response) => {
     schedule,
     requirements,
     syllabus,
+    learning_outcomes,
+    level,
+    learning_mode,
     certificate_eligibility,
     external_url
   } = req.body;
@@ -1705,13 +1928,14 @@ apiRouter.post('/courses', (req: Request, res: Response) => {
     const list = syllabus.split('\n').map((s: string) => s.replace(/^[•\-\*]\s*/, '').trim()).filter(Boolean);
     syllabusJson = JSON.stringify(list.length > 0 ? list : [syllabus.trim()]);
   }
+  const learningOutcomesJson = Array.isArray(learning_outcomes) ? JSON.stringify(learning_outcomes) : '[]';
 
   db.prepare(`
     INSERT INTO courses (
       id, partner_id, partner_name, name, category, description,
       duration, schedule, requirements, syllabus_json,
-      certificate_eligibility, status, external_url
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+      learning_outcomes_json, level, learning_mode, certificate_eligibility, status, external_url, is_demo
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0)
   `).run(
     courseId,
     user.user_id,
@@ -1723,6 +1947,9 @@ apiRouter.post('/courses', (req: Request, res: Response) => {
     schedule?.trim() || 'Flexible Self-Paced Schedule',
     requirements?.trim() || 'Open to all interested learners',
     syllabusJson,
+    learningOutcomesJson,
+    level?.trim() || 'ALL_LEVELS',
+    learning_mode?.trim() || 'ONLINE',
     certificate_eligibility !== false ? 1 : 0,
     external_url?.trim() || ''
   );
@@ -1747,8 +1974,8 @@ apiRouter.post('/courses', (req: Request, res: Response) => {
 });
 
 // Enroll in a Course
-apiRouter.post('/courses/:id/enroll', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/courses/:id/enroll', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1785,15 +2012,15 @@ apiRouter.post('/courses/:id/enroll', (req: Request, res: Response) => {
 });
 
 // User's enrolled courses
-apiRouter.get('/my-courses', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/my-courses', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
 
   const enrollments = db.prepare(`
-    SELECT ce.*, c.name, c.partner_name, c.category, c.duration, c.schedule, c.certificate_eligibility, c.description, c.syllabus_json
+    SELECT ce.*, c.name, c.partner_name, c.category, c.duration, c.schedule, c.certificate_eligibility, c.description, c.syllabus_json, c.level, c.learning_mode, c.is_demo
     FROM course_enrollments ce
     JOIN courses c ON ce.course_id = c.id
     WHERE ce.user_id = ?
@@ -1804,8 +2031,8 @@ apiRouter.get('/my-courses', (req: Request, res: Response) => {
 });
 
 // Update course progress
-apiRouter.post('/courses/:id/progress', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/courses/:id/progress', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1825,7 +2052,7 @@ apiRouter.post('/courses/:id/progress', (req: Request, res: Response) => {
   // If 100% completed, auto-issue certificate if eligible
   if (newProgress >= 100) {
     const course = db.prepare('SELECT * FROM courses WHERE id = ?').get(req.params.id) as any;
-    if (course && course.certificate_eligibility) {
+    if (course && course.certificate_eligibility && !course.is_demo) {
       const existingCert = db.prepare('SELECT * FROM certificates WHERE user_id = ? AND course_id = ?').get(user.user_id, course.id);
       if (!existingCert) {
         const certId = `CERT-LX-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -1861,8 +2088,8 @@ apiRouter.post('/courses/:id/progress', (req: Request, res: Response) => {
 // LEARNING NOTES API
 // -------------------------------------------------------------
 
-apiRouter.get('/v1/notes', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/v1/notes', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1877,8 +2104,8 @@ apiRouter.get('/v1/notes', (req: Request, res: Response) => {
   res.json({ success: true, notes });
 });
 
-apiRouter.post('/v1/notes', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/v1/notes', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1907,8 +2134,8 @@ apiRouter.post('/v1/notes', (req: Request, res: Response) => {
   res.status(201).json({ success: true, note });
 });
 
-apiRouter.get('/v1/notes/:id', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/v1/notes/:id', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1925,8 +2152,8 @@ apiRouter.get('/v1/notes/:id', (req: Request, res: Response) => {
   res.json({ success: true, note });
 });
 
-apiRouter.put('/v1/notes/:id', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.put('/v1/notes/:id', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1958,8 +2185,8 @@ apiRouter.put('/v1/notes/:id', (req: Request, res: Response) => {
   res.json({ success: true, note: updated });
 });
 
-apiRouter.delete('/v1/notes/:id', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.delete('/v1/notes/:id', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -1979,8 +2206,8 @@ apiRouter.delete('/v1/notes/:id', (req: Request, res: Response) => {
 });
 
 // User enrollments & certificates APIs
-apiRouter.get('/v1/me/enrollments', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/v1/me/enrollments', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2002,8 +2229,8 @@ apiRouter.get('/v1/me/enrollments', (req: Request, res: Response) => {
   res.json({ success: true, courses, bootcamps });
 });
 
-apiRouter.get('/v1/me/certificates', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/v1/me/certificates', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2012,8 +2239,8 @@ apiRouter.get('/v1/me/certificates', (req: Request, res: Response) => {
   res.json({ success: true, certificates });
 });
 
-apiRouter.post('/v1/courses/:id/enroll', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/v1/courses/:id/enroll', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2071,8 +2298,8 @@ apiRouter.post('/v1/courses/:id/enroll', (req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/v1/bootcamps/:id/enroll', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/v1/bootcamps/:id/enroll', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2130,8 +2357,8 @@ apiRouter.post('/v1/bootcamps/:id/enroll', (req: Request, res: Response) => {
 
 
 
-apiRouter.get('/certificates', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/certificates', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2161,8 +2388,8 @@ apiRouter.get('/certificates/verify/:id', (req: Request, res: Response) => {
 // 15. NOTIFICATIONS
 // -------------------------------------------------------------
 
-apiRouter.get('/notifications', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/notifications', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2172,8 +2399,8 @@ apiRouter.get('/notifications', (req: Request, res: Response) => {
   res.json({ notifications });
 });
 
-apiRouter.post('/notifications/:id/read', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/notifications/:id/read', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2183,8 +2410,8 @@ apiRouter.post('/notifications/:id/read', (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-apiRouter.post('/notifications/read-all', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/notifications/read-all', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2198,8 +2425,8 @@ apiRouter.post('/notifications/read-all', (req: Request, res: Response) => {
 // 16. REPORTS & BLOCKING
 // -------------------------------------------------------------
 
-apiRouter.post('/reports', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/reports', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2220,8 +2447,8 @@ apiRouter.post('/reports', (req: Request, res: Response) => {
   res.status(201).json({ success: true, message: 'Report submitted for administrative review.' });
 });
 
-apiRouter.post('/blocks', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.post('/blocks', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -2243,8 +2470,8 @@ apiRouter.post('/blocks', (req: Request, res: Response) => {
 // 17. ADMIN DASHBOARD & ANALYTICS
 // -------------------------------------------------------------
 
-apiRouter.get('/admin/analytics', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/admin/analytics', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user || user.role !== 'ADMIN') {
     res.status(403).json({ error: 'Admin access required.' });
     return;
@@ -2285,8 +2512,8 @@ apiRouter.get('/admin/analytics', (req: Request, res: Response) => {
   });
 });
 
-apiRouter.get('/admin/users', (req: Request, res: Response) => {
-  const user = getAuthenticatedUser(req);
+apiRouter.get('/admin/users', async (req: Request, res: Response) => {
+  const user = await getAuthenticatedUser(req);
   if (!user || user.role !== 'ADMIN') {
     res.status(403).json({ error: 'Admin access required.' });
     return;

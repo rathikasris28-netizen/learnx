@@ -49,7 +49,7 @@ export function TimeWalletPage({ navigate }: { navigate: (path: string) => void 
           <span>Core Rule: 1 Hour Verified Sharing = 1 Time Credit</span>
         </div>
         <p className="text-slate-300 text-[11px] leading-relaxed">
-          Time Credits have strictly no cash value, cannot be converted to money, cannot be withdrawn, and cannot be traded on external markets. They exist solely within LearnX to foster reciprocal peer knowledge sharing.
+          Time Credits are internal learning units with no cash value. They cannot be withdrawn, sold, transferred for money, or converted to currency. They exist solely within LearnX.
         </p>
       </div>
 
@@ -109,7 +109,7 @@ export function TimeWalletPage({ navigate }: { navigate: (path: string) => void 
           <div className="py-12 text-center rounded-xl border border-dashed border-slate-800 bg-slate-950/40 p-6 space-y-2">
             <Coins className="h-8 w-8 text-slate-600 mx-auto" />
             <p className="text-xs text-slate-400">
-              No transactions recorded yet. Complete a knowledge sharing session to earn your first Time Credit.
+              No transactions recorded yet. Mentors earn credits only through verified sessions; new Learners receive one welcome bonus at registration.
             </p>
             <button
               onClick={() => navigate('/discover')}
@@ -136,6 +136,7 @@ export function TimeWalletPage({ navigate }: { navigate: (path: string) => void 
                     <td className="py-3 px-3 font-semibold">
                       <span className={`px-2 py-0.5 rounded text-[10px] ${
                         tx.transaction_type === 'EARNED' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/40' :
+                        tx.transaction_type === 'WELCOME_BONUS' ? 'bg-cyan-950 text-cyan-300 border border-cyan-800/40' :
                         tx.transaction_type === 'USED' ? 'bg-amber-950 text-amber-300 border border-amber-800/40' :
                         'bg-slate-800 text-slate-300'
                       }`}>
@@ -143,7 +144,7 @@ export function TimeWalletPage({ navigate }: { navigate: (path: string) => void 
                       </span>
                     </td>
                     <td className="py-3 px-3 font-bold text-white">
-                      {tx.transaction_type === 'EARNED' ? `+${tx.amount}` : `-${tx.amount}`} TC
+                      {tx.amount > 0 ? `+${tx.amount}` : tx.amount} TC
                     </td>
                     <td className="py-3 px-3 text-slate-200">
                       {tx.description}

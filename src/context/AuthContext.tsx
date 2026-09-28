@@ -7,7 +7,7 @@ interface AuthContextType {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (formData: any) => Promise<{ user_id: string; email_confirmed: boolean }>;
+  register: (formData: any, role: 'LEARNER' | 'KNOWLEDGE_SHARER') => Promise<{ user_id: string; email_confirmed: boolean; role: string; welcome_bonus: number; balance: number }>;
   logout: () => void;
   refreshUser: () => Promise<void>;
   verifyEmail: (userId?: string, email?: string) => Promise<void>;
@@ -80,14 +80,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const register = async (formData: any) => {
-    const data = await apiRequest('/auth/register', {
+  const register = async (formData: any, role: 'LEARNER' | 'KNOWLEDGE_SHARER') => {
+    const endpoint = role === 'LEARNER' ? '/auth/register/learner' : '/auth/register/mentor';
+    const data = await apiRequest(endpoint, {
       method: 'POST',
-      body: JSON.stringify(formData)
+      body: formData
     });
+    if (data.user && data.token) {
+      localStorage.setItem('learnx_user_id', data.user.user_id);
+      localStorage.setItem('learnx_token', data.token);
+      setToken(data.token);
+      setUser(data.user);
+    }
     return {
       user_id: data.user_id,
-      email_confirmed: data.email_confirmed
+      email_confirmed: data.email_confirmed,
+      role: data.role,
+      welcome_bonus: data.welcome_bonus || 0,
+      balance: data.user?.wallet_balance ?? 0
     };
   };
 

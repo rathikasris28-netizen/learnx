@@ -33,6 +33,13 @@ export function initDatabase() {
       role TEXT DEFAULT 'LEARNER',
       is_email_verified INTEGER DEFAULT 0,
       onboarding_completed INTEGER DEFAULT 0,
+      terms_accepted_at TEXT,
+      learning_goal TEXT,
+      target_skill_level TEXT,
+      learning_schedule TEXT,
+      learning_interests_json TEXT DEFAULT '[]',
+      mentor_experience TEXT,
+      mentor_languages_json TEXT DEFAULT '[]',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -52,6 +59,11 @@ export function initDatabase() {
       skill_id TEXT NOT NULL,
       skill_type TEXT NOT NULL CHECK(skill_type IN ('LEARN', 'SHARE')),
       skill_level TEXT NOT NULL CHECK(skill_level IN ('BEGINNER', 'ELEMENTARY', 'INTERMEDIATE', 'ADVANCED')),
+      experience TEXT,
+      languages_json TEXT DEFAULT '[]',
+      skill_description TEXT,
+      beginner_friendly INTEGER DEFAULT 0,
+      skill_proof TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE,
       FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
@@ -64,6 +76,8 @@ export function initDatabase() {
       skill_id TEXT NOT NULL,
       goal_text TEXT NOT NULL,
       target_date TEXT,
+      target_level TEXT DEFAULT 'INTERMEDIATE',
+      preferred_schedule TEXT DEFAULT '',
       status TEXT DEFAULT 'IN_PROGRESS',
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE,
@@ -93,6 +107,14 @@ export function initDatabase() {
       status TEXT NOT NULL CHECK(status IN ('REQUESTED', 'ACCEPTED', 'REJECTED', 'CANCELLED', 'IN_PROGRESS', 'COMPLETED', 'DISPUTED')),
       learning_goal TEXT NOT NULL,
       room_id TEXT NOT NULL,
+      session_stage TEXT NOT NULL DEFAULT 'REQUESTED',
+      learner_joined_at TEXT,
+      sharer_joined_at TEXT,
+      started_at TEXT,
+      ended_at TEXT,
+      duration_seconds INTEGER DEFAULT 0,
+      verified_credits REAL DEFAULT 0,
+      verified_at TEXT,
       learner_confirmed INTEGER DEFAULT 0,
       sharer_confirmed INTEGER DEFAULT 0,
       credit_awarded INTEGER DEFAULT 0,
@@ -118,7 +140,7 @@ export function initDatabase() {
       user_id TEXT NOT NULL,
       session_id TEXT,
       amount INTEGER NOT NULL,
-      transaction_type TEXT NOT NULL CHECK(transaction_type IN ('EARNED', 'USED', 'REVERSAL', 'ADJUSTMENT')),
+      transaction_type TEXT NOT NULL CHECK(transaction_type IN ('EARNED', 'USED', 'REVERSAL', 'ADJUSTMENT', 'WELCOME_BONUS')),
       status TEXT DEFAULT 'COMPLETED',
       description TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
@@ -295,14 +317,21 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS courses (
       id TEXT PRIMARY KEY,
       partner_id TEXT,
+      partner_name TEXT DEFAULT '',
       name TEXT NOT NULL,
+      category TEXT DEFAULT 'General',
       description TEXT NOT NULL,
       duration TEXT NOT NULL,
       schedule TEXT,
       requirements TEXT,
       syllabus_json TEXT DEFAULT '[]',
+      learning_outcomes_json TEXT DEFAULT '[]',
+      level TEXT DEFAULT 'ALL_LEVELS',
+      learning_mode TEXT DEFAULT 'ONLINE',
       certificate_eligibility INTEGER DEFAULT 1,
+      is_demo INTEGER DEFAULT 0,
       status TEXT DEFAULT 'ACTIVE',
+      external_url TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -329,6 +358,15 @@ export function initDatabase() {
       end_date TEXT NOT NULL,
       requirements TEXT,
       syllabus_json TEXT DEFAULT '[]',
+      learning_outcomes_json TEXT DEFAULT '[]',
+      category TEXT DEFAULT 'General',
+      duration TEXT DEFAULT '4 Weeks',
+      level TEXT DEFAULT 'ALL_LEVELS',
+      mode TEXT DEFAULT 'ONLINE',
+      provider_name TEXT DEFAULT '',
+      certificate_eligibility INTEGER DEFAULT 0,
+      time_credit_cost INTEGER DEFAULT 0,
+      is_demo INTEGER DEFAULT 0,
       status TEXT DEFAULT 'ACTIVE',
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -433,6 +471,27 @@ export function initDatabase() {
       UNIQUE(session_id, note_id)
     );
 
+    CREATE TABLE IF NOT EXISTS session_chat_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS session_private_notes (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE,
+      UNIQUE(session_id, user_id)
+    );
+
     CREATE TABLE IF NOT EXISTS bootcamps (
       id TEXT PRIMARY KEY,
       partner_id TEXT,
@@ -494,15 +553,58 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
     CREATE INDEX IF NOT EXISTS idx_learning_notes_user ON learning_notes(user_id);
     CREATE INDEX IF NOT EXISTS idx_learning_notes_skill ON learning_notes(skill_id);
+    CREATE INDEX IF NOT EXISTS idx_session_chat_session ON session_chat_messages(session_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_session_private_notes_user ON session_private_notes(user_id, session_id);
   `);
 
-  // Migrations for Google Meet & Partner Courses
+  migrateCreditTransactionTypes();
+  db.prepare('UPDATE profiles SET password_hash = NULL WHERE password_hash IS NOT NULL').run();
+  try { db.prepare(`ALTER TABLE profiles ADD COLUMN terms_accepted_at TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE profiles ADD COLUMN learning_goal TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE profiles ADD COLUMN target_skill_level TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE profiles ADD COLUMN learning_schedule TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE profiles ADD COLUMN learning_interests_json TEXT DEFAULT '[]'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE profiles ADD COLUMN mentor_experience TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE profiles ADD COLUMN mentor_languages_json TEXT DEFAULT '[]'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE user_skills ADD COLUMN experience TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE user_skills ADD COLUMN languages_json TEXT DEFAULT '[]'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE user_skills ADD COLUMN skill_description TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE user_skills ADD COLUMN beginner_friendly INTEGER DEFAULT 0`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE user_skills ADD COLUMN skill_proof TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE learning_goals ADD COLUMN target_level TEXT DEFAULT 'INTERMEDIATE'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE learning_goals ADD COLUMN preferred_schedule TEXT DEFAULT ''`).run(); } catch {}
+
+  // Migrations for session lifecycle and legacy schema compatibility
+  try { db.prepare(`ALTER TABLE sessions ADD COLUMN session_stage TEXT NOT NULL DEFAULT 'REQUESTED'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE sessions ADD COLUMN learner_joined_at TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE sessions ADD COLUMN sharer_joined_at TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE sessions ADD COLUMN started_at TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE sessions ADD COLUMN ended_at TEXT`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE sessions ADD COLUMN verified_credits REAL DEFAULT 0`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE sessions ADD COLUMN verified_at TEXT`).run(); } catch {}
+  db.prepare(`UPDATE sessions SET session_stage = CASE status WHEN 'REQUESTED' THEN 'REQUESTED' WHEN 'ACCEPTED' THEN 'SCHEDULED' WHEN 'IN_PROGRESS' THEN 'STARTED' WHEN 'COMPLETED' THEN 'VERIFIED' ELSE status END WHERE session_stage = 'REQUESTED' AND status <> 'REQUESTED'`).run();
   try { db.prepare(`ALTER TABLE sessions ADD COLUMN meeting_provider TEXT DEFAULT 'BUILTIN'`).run(); } catch {}
   try { db.prepare(`ALTER TABLE sessions ADD COLUMN meet_link TEXT DEFAULT ''`).run(); } catch {}
+  db.prepare(`UPDATE sessions SET meeting_provider = 'BUILTIN', meet_link = '' WHERE meeting_provider <> 'BUILTIN' OR meet_link <> ''`).run();
+  db.prepare(`UPDATE sessions SET verified_credits = 1 WHERE status = 'COMPLETED' AND credit_awarded = 1 AND verified_credits = 0`).run();
   try { db.prepare(`ALTER TABLE sessions ADD COLUMN calendar_event_id TEXT DEFAULT ''`).run(); } catch {}
   try { db.prepare(`ALTER TABLE courses ADD COLUMN category TEXT DEFAULT 'General'`).run(); } catch {}
   try { db.prepare(`ALTER TABLE courses ADD COLUMN partner_name TEXT DEFAULT ''`).run(); } catch {}
   try { db.prepare(`ALTER TABLE courses ADD COLUMN external_url TEXT DEFAULT ''`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE courses ADD COLUMN level TEXT DEFAULT 'ALL_LEVELS'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE courses ADD COLUMN learning_mode TEXT DEFAULT 'ONLINE'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE courses ADD COLUMN learning_outcomes_json TEXT DEFAULT '[]'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE courses ADD COLUMN is_demo INTEGER DEFAULT 0`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN learning_outcomes_json TEXT DEFAULT '[]'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN category TEXT DEFAULT 'General'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN duration TEXT DEFAULT '4 Weeks'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN level TEXT DEFAULT 'ALL_LEVELS'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN mode TEXT DEFAULT 'ONLINE'`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN provider_name TEXT DEFAULT ''`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN certificate_eligibility INTEGER DEFAULT 0`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN time_credit_cost INTEGER DEFAULT 0`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE bootcamps ADD COLUMN is_demo INTEGER DEFAULT 0`).run(); } catch {}
   try { db.prepare(`ALTER TABLE trust_scores ADD COLUMN rating_avg REAL DEFAULT 5.0`).run(); } catch {}
 
   // Seed system skills if empty
@@ -523,14 +625,41 @@ export function initDatabase() {
     seedInitialQuizzes();
   }
 
-  // Seed initial partner courses if empty
-  const courseCount = (db.prepare('SELECT COUNT(*) as count FROM courses').get() as { count: number }).count;
-  if (courseCount === 0) {
-    seedInitialCourses();
-  }
+  seedInitialCourses();
+  seedDemoBootcamps();
 
   // Ensure default Supabase users are registered in local SQLite
   syncInitialSupabaseUsers();
+}
+
+function migrateCreditTransactionTypes() {
+  const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'credit_transactions'").get() as { sql: string } | undefined;
+  if (schema?.sql && !schema.sql.includes('WELCOME_BONUS')) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        CREATE TABLE credit_transactions_v2 (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          session_id TEXT,
+          amount INTEGER NOT NULL,
+          transaction_type TEXT NOT NULL CHECK(transaction_type IN ('EARNED', 'USED', 'REVERSAL', 'ADJUSTMENT', 'WELCOME_BONUS')),
+          status TEXT DEFAULT 'COMPLETED',
+          description TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
+        );
+        INSERT INTO credit_transactions_v2 SELECT * FROM credit_transactions;
+        DROP TABLE credit_transactions;
+        ALTER TABLE credit_transactions_v2 RENAME TO credit_transactions;
+      `);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_welcome_bonus_once ON credit_transactions(user_id) WHERE transaction_type = 'WELCOME_BONUS'`);
 }
 
 function seedInitialSkills() {
@@ -807,86 +936,67 @@ function seedInitialCourses() {
   const sampleCourses = [
     {
       id: 'course-gcp-cloud-01',
-      partner_id: 'partner-gcp',
-      partner_name: 'Google Cloud Academy Partner',
-      name: 'Google Cloud Foundations & Vertex AI Architecture',
-      category: 'Cloud & AI',
-      description: 'Comprehensive industry program covering Cloud Run, BigQuery, IAM policies, and generative AI deployments on Vertex AI.',
-      duration: '4 Weeks (16 Hours)',
-      schedule: 'Tuesdays & Thursdays, 7:00 PM - 9:00 PM IST',
-      requirements: 'Basic understanding of HTTP APIs and basic programming.',
-      syllabus_json: JSON.stringify([
-        'Module 1: Cloud Architecture, Compute Engine & Serverless Cloud Run',
-        'Module 2: Cloud Storage, Firestore & Scalable Relational Cloud SQL',
-        'Module 3: Vertex AI Studio, Gemini Pro Embeddings & RAG Pipelines',
-        'Module 4: Enterprise Identity, IAM RBAC & Production Deployment'
-      ]),
+      partner_name: 'LearnX Academy',
+      name: 'Python for Beginners',
+      category: 'Programming',
+      description: 'A practical introduction to Python syntax, data structures, functions, and small automation projects.',
+      duration: '4 Weeks',
+      schedule: 'Self-paced demonstration course',
+      requirements: 'No prior programming experience required.',
+      syllabus_json: JSON.stringify(['Python setup and syntax', 'Conditions, loops, and collections', 'Functions and modules', 'Guided beginner project']),
+      learning_outcomes_json: JSON.stringify(['Write small Python programs', 'Use common built-in data structures', 'Break a problem into functions']),
+      level: 'BEGINNER',
+      learning_mode: 'ONLINE',
       certificate_eligibility: 1,
-      status: 'ACTIVE',
-      external_url: 'https://cloud.google.com/training'
+      is_demo: 1
     },
     {
       id: 'course-py-algo-02',
-      partner_id: 'partner-iitm',
-      partner_name: 'IIT Madras Open Learning Initiative',
-      name: 'Mastering Python Algorithms & Data Structures',
-      category: 'Software Engineering',
-      description: 'Rigorous computer science curriculum focusing on algorithmic time complexity, trees, graphs, dynamic programming, and systems thinking.',
-      duration: '6 Weeks (24 Hours)',
-      schedule: 'Mondays & Wednesdays, 6:30 PM - 8:30 PM IST',
-      requirements: 'Introductory Python syntax knowledge.',
-      syllabus_json: JSON.stringify([
-        'Module 1: Asymptotic Analysis, Big-O Notation & Memory Footprint',
-        'Module 2: Advanced Lists, Queues, Hash Tables & In-Memory Indexing',
-        'Module 3: Recursion, Divide & Conquer, Merge/Quick Sort Optimizations',
-        'Module 4: Binary Trees, Heaps & Graph Traversal (BFS / DFS / Dijkstra)',
-        'Module 5: Dynamic Programming, Memoization & Greedy Paradigms',
-        'Module 6: Capstone: Building High-Throughput Matching Engines'
-      ]),
+      partner_name: 'SkillBridge Learning',
+      name: 'Web Development Fundamentals',
+      category: 'Web Development',
+      description: 'Build a strong foundation in HTML, CSS, responsive layouts, and browser-side JavaScript.',
+      duration: '6 Weeks',
+      schedule: 'Self-paced demonstration course',
+      requirements: 'A computer with a modern web browser.',
+      syllabus_json: JSON.stringify(['HTML structure and semantics', 'CSS layout and responsive design', 'JavaScript fundamentals', 'Accessible multi-page project']),
+      learning_outcomes_json: JSON.stringify(['Create semantic web pages', 'Style responsive layouts', 'Add basic interactions with JavaScript']),
+      level: 'BEGINNER',
+      learning_mode: 'ONLINE',
       certificate_eligibility: 1,
-      status: 'ACTIVE',
-      external_url: 'https://nptel.ac.in'
+      is_demo: 1
     },
     {
       id: 'course-web-react-03',
-      partner_id: 'partner-dlai',
-      partner_name: 'DeepLearning.AI Student Chapter',
-      name: 'Building Full-Stack AI Web Apps with React & Node.js',
-      category: 'Web Development',
-      description: 'Hands-on practical full-stack track covering modern TypeScript, Tailwind CSS, WebRTC video integration, and server-side AI endpoints.',
-      duration: '5 Weeks (20 Hours)',
-      schedule: 'Saturdays & Sundays, 10:00 AM - 12:00 PM IST',
-      requirements: 'Familiarity with HTML, CSS, and modern JavaScript syntax.',
-      syllabus_json: JSON.stringify([
-        'Module 1: React 18 Concurrent Rendering, Custom Hooks & State Stores',
-        'Module 2: Server-Side REST APIs with Express, TypeScript & SQLite Persistence',
-        'Module 3: WebRTC Video Streaming & Real-Time Protocol Integrations',
-        'Module 4: Integrating AI Models, Streaming Prompts & Token Security',
-        'Module 5: Capstone: Deploying a Resilient Multi-User Platform'
-      ]),
+      partner_name: 'FutureSkills Hub',
+      name: 'Introduction to Data Science',
+      category: 'Data Science',
+      description: 'Explore data cleaning, descriptive statistics, visualization, and a small exploratory analysis.',
+      duration: '5 Weeks',
+      schedule: 'Self-paced demonstration course',
+      requirements: 'Basic spreadsheet familiarity is helpful.',
+      syllabus_json: JSON.stringify(['Data questions and datasets', 'Cleaning tabular data', 'Descriptive statistics', 'Visualizing and presenting findings']),
+      learning_outcomes_json: JSON.stringify(['Prepare a small dataset', 'Summarize data with basic statistics', 'Communicate findings with charts']),
+      level: 'INTERMEDIATE',
+      learning_mode: 'ONLINE',
       certificate_eligibility: 1,
-      status: 'ACTIVE',
-      external_url: 'https://deeplearning.ai'
+      is_demo: 1
     },
     {
       id: 'course-comm-english-04',
-      partner_id: 'partner-tnsdc',
-      partner_name: 'Tamil Nadu Skill Development Corp (TNSDC)',
-      name: 'Professional English Communication & Global Workplace Fluency',
-      category: 'Communication',
-      description: 'Interactive workplace communication, tech interview English, executive presence, concise email phrasing, and cross-cultural collaboration.',
-      duration: '4 Weeks (16 Hours)',
-      schedule: 'Fridays & Saturdays, 6:00 PM - 8:00 PM IST',
-      requirements: 'Open to all learners desiring English fluency.',
-      syllabus_json: JSON.stringify([
-        'Module 1: Overcoming Hesitation & Accent Neutralization Essentials',
-        'Module 2: Technical Explanation: Articulating Complex Ideas Simply',
-        'Module 3: Mock Client Pitches, Active Listening & Standup Etiquette',
-        'Module 4: The STAR Method for Behavioral Interviews & Salary Negotiation'
-      ]),
+      partner_name: 'TechPath Institute',
+      name: 'AI & Machine Learning Basics',
+      category: 'Artificial Intelligence',
+      description: 'A first look at machine learning concepts, data preparation, model evaluation, and responsible AI.',
+      duration: '6 Weeks',
+      schedule: 'Self-paced demonstration course',
+      requirements: 'Comfort with basic algebra and spreadsheets.',
+      syllabus_json: JSON.stringify(['AI and machine learning overview', 'Preparing example datasets', 'Training and evaluating a simple model', 'Responsible use and limitations']),
+      learning_outcomes_json: JSON.stringify(['Distinguish common learning approaches', 'Describe a model evaluation result', 'Identify limitations in an AI workflow']),
+      level: 'INTERMEDIATE',
+      learning_mode: 'ONLINE',
       certificate_eligibility: 1,
-      status: 'ACTIVE',
-      external_url: 'https://naanmudhalvan.tn.gov.in'
+      is_demo: 1
     }
   ];
 
@@ -894,15 +1004,87 @@ function seedInitialCourses() {
     INSERT INTO courses (
       id, partner_id, partner_name, name, category, description,
       duration, schedule, requirements, syllabus_json,
-      certificate_eligibility, status, external_url
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      learning_outcomes_json, level, learning_mode, certificate_eligibility,
+      is_demo, status, external_url
+    ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', '')
+    ON CONFLICT(id) DO UPDATE SET
+      partner_id = NULL, partner_name = excluded.partner_name, name = excluded.name,
+      category = excluded.category, description = excluded.description, duration = excluded.duration,
+      schedule = excluded.schedule, requirements = excluded.requirements, syllabus_json = excluded.syllabus_json,
+      learning_outcomes_json = excluded.learning_outcomes_json, level = excluded.level,
+      learning_mode = excluded.learning_mode, certificate_eligibility = excluded.certificate_eligibility,
+      is_demo = 1, external_url = ''
+    WHERE courses.id IN ('course-gcp-cloud-01', 'course-py-algo-02', 'course-web-react-03', 'course-comm-english-04')
   `);
 
   for (const c of sampleCourses) {
     stmt.run(
-      c.id, c.partner_id, c.partner_name, c.name, c.category, c.description,
+      c.id, c.partner_name, c.name, c.category, c.description,
       c.duration, c.schedule, c.requirements, c.syllabus_json,
-      c.certificate_eligibility, c.status, c.external_url
+      c.learning_outcomes_json, c.level, c.learning_mode, c.certificate_eligibility
+    );
+  }
+}
+
+function seedDemoBootcamps() {
+  const samples = [
+    {
+      id: 'bootcamp-demo-web-oct-2026', name: 'Full Stack Web Development Bootcamp',
+      category: 'Web Development', duration: '4 Weeks', level: 'BEGINNER_TO_INTERMEDIATE',
+      provider: 'LearnX Academy', start: '2026-10-05', end: '2026-11-01',
+      description: 'A sample four-week path through frontend fundamentals, APIs, and a guided full-stack project.',
+      requirements: 'Basic computer literacy; no professional experience required.',
+      syllabus: ['Week 1: HTML, CSS, and accessible page structure', 'Week 2: JavaScript and browser APIs', 'Week 3: HTTP APIs and persistence concepts', 'Week 4: Guided full-stack capstone'],
+      outcomes: ['Build a responsive frontend', 'Connect a frontend to an API', 'Explain a simple full-stack architecture']
+    },
+    {
+      id: 'bootcamp-demo-data-nov-2026', name: 'Python & Data Science Bootcamp',
+      category: 'Data Science', duration: '4 Weeks', level: 'BEGINNER',
+      provider: 'SkillBridge Learning', start: '2026-11-02', end: '2026-11-29',
+      description: 'A sample guided program covering Python basics and a small data exploration project.',
+      requirements: 'No prior coding experience required.',
+      syllabus: ['Week 1: Python foundations', 'Week 2: Collections and tabular data', 'Week 3: Summaries and visualizations', 'Week 4: Guided data story'],
+      outcomes: ['Write beginner Python scripts', 'Summarize a small dataset', 'Present a data finding clearly']
+    },
+    {
+      id: 'bootcamp-demo-ai-dec-2026', name: 'AI & Machine Learning Bootcamp',
+      category: 'Artificial Intelligence', duration: '4 Weeks', level: 'INTERMEDIATE',
+      provider: 'FutureSkills Hub', start: '2026-12-01', end: '2026-12-28',
+      description: 'A sample introduction to machine learning workflows and responsible model evaluation.',
+      requirements: 'Basic algebra and introductory programming familiarity.',
+      syllabus: ['Week 1: Machine learning concepts', 'Week 2: Data preparation', 'Week 3: Model training and evaluation', 'Week 4: Responsible AI review'],
+      outcomes: ['Describe a basic ML workflow', 'Read common evaluation measures', 'Identify model limitations']
+    },
+    {
+      id: 'bootcamp-demo-security-jan-2027', name: 'Cybersecurity Fundamentals Bootcamp',
+      category: 'Cybersecurity', duration: '4 Weeks', level: 'BEGINNER',
+      provider: 'TechPath Institute', start: '2027-01-04', end: '2027-01-31',
+      description: 'A sample program on security fundamentals, threat awareness, and safer development habits.',
+      requirements: 'No prior security experience required.',
+      syllabus: ['Week 1: Security vocabulary and threat models', 'Week 2: Accounts, access, and authentication', 'Week 3: Web safety and common risks', 'Week 4: Defensive checklist project'],
+      outcomes: ['Recognize common security risks', 'Apply basic account-safety practices', 'Describe a simple threat model']
+    }
+  ];
+  const insert = db.prepare(`
+    INSERT INTO bootcamps (
+      id, partner_id, name, description, schedule, start_date, end_date, requirements,
+      syllabus_json, learning_outcomes_json, category, duration, level, mode, provider_name,
+      certificate_eligibility, time_credit_cost, is_demo, status
+    ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ONLINE', ?, 1, 0, 1, 'ACTIVE')
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name, description = excluded.description, schedule = excluded.schedule,
+      start_date = excluded.start_date, end_date = excluded.end_date, requirements = excluded.requirements,
+      syllabus_json = excluded.syllabus_json, learning_outcomes_json = excluded.learning_outcomes_json,
+      category = excluded.category, duration = excluded.duration, level = excluded.level,
+      mode = excluded.mode, provider_name = excluded.provider_name,
+      certificate_eligibility = excluded.certificate_eligibility, time_credit_cost = 0, is_demo = 1
+    WHERE bootcamps.is_demo = 1
+  `);
+  for (const sample of samples) {
+    insert.run(
+      sample.id, sample.name, sample.description, 'Four-week demonstration program', sample.start, sample.end,
+      sample.requirements, JSON.stringify(sample.syllabus), JSON.stringify(sample.outcomes), sample.category,
+      sample.duration, sample.level, sample.provider
     );
   }
 }

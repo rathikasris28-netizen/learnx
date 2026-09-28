@@ -32,8 +32,6 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
   const [selectedCandidate, setSelectedCandidate] = useState<MatchCandidate | null>(null);
   const [bookingDate, setBookingDate] = useState(new Date().toISOString().split('T')[0]);
   const [bookingTime, setBookingTime] = useState('18:00:00');
-  const [meetingProvider, setMeetingProvider] = useState<'GOOGLE_MEET' | 'BUILTIN'>('GOOGLE_MEET');
-  const [customMeetLink, setCustomMeetLink] = useState('');
   const [learningGoal, setLearningGoal] = useState('');
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState('');
@@ -110,9 +108,7 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
           session_date: bookingDate,
           start_time: bookingTime,
           end_time: endTime,
-          learning_goal: learningGoal,
-          meeting_provider: meetingProvider,
-          meet_link: customMeetLink.trim()
+          learning_goal: learningGoal
         })
       });
 
@@ -393,68 +389,9 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
                   </div>
                 </div>
 
-                {/* Meeting Room Format Selection */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Session Video Platform *
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setMeetingProvider('GOOGLE_MEET')}
-                      className={`p-3 rounded-xl border text-left transition-all ${
-                        meetingProvider === 'GOOGLE_MEET'
-                          ? 'border-cyan-500 bg-cyan-950/40 text-white shadow-sm ring-1 ring-cyan-500'
-                          : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 font-bold text-xs">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                        <span className="text-white">Google Meet</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        Auto-generates Google Meet space & syncs with Google Calendar.
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setMeetingProvider('BUILTIN')}
-                      className={`p-3 rounded-xl border text-left transition-all ${
-                        meetingProvider === 'BUILTIN'
-                          ? 'border-cyan-500 bg-cyan-950/40 text-white shadow-sm ring-1 ring-cyan-500'
-                          : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 font-bold text-xs">
-                        <span className="h-2 w-2 rounded-full bg-blue-400" />
-                        <span className="text-white">LearnX LiveKit Room</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        Built-in WebRTC video room with integrated peer screen share.
-                      </p>
-                    </button>
-                  </div>
-                </div>
-
-                {meetingProvider === 'GOOGLE_MEET' && (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Custom Google Meet Link (Optional)
-                    </label>
-                    <input
-                      type="url"
-                      placeholder="e.g. https://meet.google.com/abc-defg-hij (Leave blank to auto-generate)"
-                      value={customMeetLink}
-                      onChange={(e) => setCustomMeetLink(e.target.value)}
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
-                )}
-
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    What is your specific learning goal for this 1-hour session? *
+                    What is your specific learning goal for this session? *
                   </label>
                   <textarea
                     rows={3}
@@ -469,9 +406,9 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
                 <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-400 space-y-1">
                   <div className="flex items-center gap-1.5 text-cyan-300 font-semibold">
                     <Clock className="h-3.5 w-3.5" />
-                    <span>Duration: 60 Minutes (Standard 1 Session = 1 Time Credit)</span>
+                    <span>LearnX private video room · verified session time</span>
                   </div>
-                  <p>Upon two-way completion confirmation, 1 Time Credit will be minted and awarded to the sharer.</p>
+                  <p>Both participants confirm completion. Any Time Credits are calculated from verified sharing time.</p>
                 </div>
 
                 <div className="flex justify-end gap-3 pt-2">

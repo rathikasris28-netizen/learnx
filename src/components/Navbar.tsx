@@ -73,7 +73,7 @@ export function Navbar({ currentPath, navigate }: NavbarProps) {
         </div>
 
         {/* Desktop Navigation */}
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
+        <nav className="hidden xl:flex items-center gap-3 text-xs font-medium whitespace-nowrap">
           {user ? (
             <>
               <button 
@@ -105,17 +105,23 @@ export function Navbar({ currentPath, navigate }: NavbarProps) {
               </button>
               <button 
                 onClick={() => navigate('/courses')}
-                className={`flex items-center gap-1.5 transition-colors ${currentPath === '/courses' || currentPath === '/partner-courses' ? 'text-blue-600 font-semibold' : 'text-slate-600 hover:text-blue-600'}`}
+                className={`flex items-center gap-1.5 transition-colors ${currentPath.startsWith('/courses') || currentPath === '/partner-courses' ? 'text-blue-600 font-semibold' : 'text-slate-600 hover:text-blue-600'}`}
               >
                 <GraduationCap className="h-4 w-4 text-emerald-600" />
                 Courses
               </button>
               <button 
                 onClick={() => navigate('/bootcamps')}
-                className={`flex items-center gap-1.5 transition-colors ${currentPath === '/bootcamps' ? 'text-blue-600 font-semibold' : 'text-slate-600 hover:text-blue-600'}`}
+                className={`flex items-center gap-1.5 transition-colors ${currentPath.startsWith('/bootcamps') ? 'text-blue-600 font-semibold' : 'text-slate-600 hover:text-blue-600'}`}
               >
                 <GraduationCap className="h-4 w-4 text-blue-600" />
-                Bootcamps
+                Monthly Bootcamps
+              </button>
+              <button onClick={() => navigate('/terms')} className={`transition-colors ${currentPath === '/terms' ? 'text-blue-600 font-semibold' : 'text-slate-600 hover:text-blue-600'}`}>
+                Terms & Conditions
+              </button>
+              <button onClick={() => navigate('/privacy')} className={`transition-colors ${currentPath === '/privacy' ? 'text-blue-600 font-semibold' : 'text-slate-600 hover:text-blue-600'}`}>
+                Privacy Policy
               </button>
               <button 
                 onClick={() => navigate('/notes')}
@@ -154,7 +160,19 @@ export function Navbar({ currentPath, navigate }: NavbarProps) {
                 Skill Catalog
               </button>
               <button onClick={() => navigate('/courses')} className="text-slate-600 hover:text-blue-600">
-                Partner Courses
+                Courses
+              </button>
+              <button onClick={() => navigate('/bootcamps')} className="text-slate-600 hover:text-blue-600">
+                Monthly Bootcamps
+              </button>
+              <button onClick={() => navigate('/register')} className="text-slate-600 hover:text-blue-600">
+                Registration
+              </button>
+              <button onClick={() => navigate('/terms')} className="text-slate-600 hover:text-blue-600">
+                Terms & Conditions
+              </button>
+              <button onClick={() => navigate('/privacy')} className="text-slate-600 hover:text-blue-600">
+                Privacy Policy
               </button>
               <button onClick={() => navigate('/recommendations')} className="text-slate-600 hover:text-blue-600">
                 How AI Matching Works
@@ -265,7 +283,7 @@ export function Navbar({ currentPath, navigate }: NavbarProps) {
                 onClick={() => navigate('/register')}
                 className="px-4 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm hover:from-blue-500 hover:to-indigo-500 transition-all"
               >
-                Register
+                Registration
               </button>
             </div>
           )}
@@ -273,7 +291,7 @@ export function Navbar({ currentPath, navigate }: NavbarProps) {
           {/* Mobile Menu Button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900"
+            className="xl:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900"
           >
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
@@ -282,7 +300,7 @@ export function Navbar({ currentPath, navigate }: NavbarProps) {
 
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-b border-slate-200 bg-white px-4 py-4 space-y-1.5 shadow-lg">
+        <div className="xl:hidden border-b border-slate-200 bg-white px-4 py-4 space-y-1.5 shadow-lg">
           {user ? (
             <>
               <button onClick={() => { navigate('/dashboard'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-700 font-medium rounded-xl hover:bg-blue-50 hover:text-blue-600">
@@ -298,7 +316,16 @@ export function Navbar({ currentPath, navigate }: NavbarProps) {
                 My Sessions
               </button>
               <button onClick={() => { navigate('/courses'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-700 font-medium rounded-xl hover:bg-blue-50 hover:text-blue-600">
-                Partner Courses
+                Courses
+              </button>
+              <button onClick={() => { navigate('/bootcamps'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-700 font-medium rounded-xl hover:bg-blue-50 hover:text-blue-600">
+                Monthly Bootcamps
+              </button>
+              <button onClick={() => { navigate('/terms'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-700 font-medium rounded-xl hover:bg-blue-50 hover:text-blue-600">
+                Terms & Conditions
+              </button>
+              <button onClick={() => { navigate('/privacy'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-700 font-medium rounded-xl hover:bg-blue-50 hover:text-blue-600">
+                Privacy Policy
               </button>
               <button onClick={() => { navigate('/time-wallet'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-700 font-medium rounded-xl hover:bg-blue-50 hover:text-blue-600">
                 Time Wallet ({user.wallet_balance ?? 0} TC)
@@ -327,7 +354,13 @@ export function Navbar({ currentPath, navigate }: NavbarProps) {
                 Sign In
               </button>
               <button onClick={() => { navigate('/register'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-blue-600 font-semibold rounded-xl hover:bg-blue-50">
-                Register Account
+                Registration
+              </button>
+              <button onClick={() => { navigate('/terms'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-700 rounded-xl hover:bg-blue-50">
+                Terms & Conditions
+              </button>
+              <button onClick={() => { navigate('/privacy'); setMobileMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-700 rounded-xl hover:bg-blue-50">
+                Privacy Policy
               </button>
             </>
           )}

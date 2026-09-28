@@ -1,4 +1,4 @@
-const API_BASE = 'https://learnx-backend-heqj.onrender.com/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '/api' : 'https://learnx-backend-heqj.onrender.com/api');
 
 interface ApiOptions extends Omit<RequestInit, 'body'> {
   body?: any;
@@ -8,7 +8,6 @@ export async function apiRequest<T = any>(
   endpoint: string,
   options: ApiOptions = {}
 ): Promise<T> {
-  const currentUserId = localStorage.getItem('learnx_user_id');
   const token = localStorage.getItem('learnx_token');
 
   const headers: Record<string, string> = {
@@ -16,9 +15,6 @@ export async function apiRequest<T = any>(
     ...(options.headers as Record<string, string> || {})
   };
 
-  if (currentUserId) {
-    headers['x-user-id'] = currentUserId;
-  }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }

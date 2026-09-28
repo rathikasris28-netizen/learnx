@@ -22,18 +22,24 @@ export function DashboardPage({ navigate }: { navigate: (path: string) => void }
   const { user, refreshUser } = useAuth();
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [recommended, setRecommended] = useState<MatchCandidate[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [learningProgress, setLearningProgress] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [availabilityStatus, setAvailabilityStatus] = useState<string>(user?.availability || 'ACTIVE');
 
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [sessRes, matchRes] = await Promise.all([
+      const [sessRes, matchRes, walletRes, progressRes] = await Promise.all([
         apiRequest('/sessions'),
-        apiRequest('/matching')
+        apiRequest('/matching'),
+        apiRequest('/time-wallet'),
+        apiRequest('/progress')
       ]);
       setSessions(sessRes.sessions || []);
       setRecommended((matchRes.matches || []).slice(0, 3));
+      setTransactions(walletRes.transactions || []);
+      setLearningProgress(progressRes.progress || []);
     } catch {
       // ignore
     } finally {
@@ -71,7 +77,7 @@ export function DashboardPage({ navigate }: { navigate: (path: string) => void }
               Hello, {user?.full_name || 'Learner'}
             </h1>
             <span className="text-[11px] font-semibold text-cyan-400 bg-cyan-950/60 border border-cyan-800/40 px-2 py-0.5 rounded">
-              Verified Peer
+              {user?.role === 'KNOWLEDGE_SHARER' ? 'Mentor / Knowledge Sharer' : user?.role === 'ADMIN' ? 'Admin' : 'Learner'}
             </span>
           </div>
           <p className="text-xs text-slate-400">
@@ -105,7 +111,7 @@ export function DashboardPage({ navigate }: { navigate: (path: string) => void }
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Time Credits Wallet */}
         <div 
           onClick={() => navigate('/time-wallet')}
@@ -121,6 +127,12 @@ export function DashboardPage({ navigate }: { navigate: (path: string) => void }
           <p className="text-[11px] text-slate-400 mt-1">
             {user?.total_earned_credits ?? 0} earned · 1 Hour Sharing = 1 TC
           </p>
+        </div>
+
+        <div onClick={() => navigate('/time-wallet')} className="p-5 rounded-2xl border border-slate-800 bg-slate-900/40 hover:border-amber-500/40 cursor-pointer transition-all shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Spent</div>
+          <div className="mt-2 text-2xl font-bold text-white font-['Space_Grotesk']">{user?.total_spent_credits ?? 0} <span className="text-xs font-normal text-amber-400">TC</span></div>
+          <p className="mt-1 text-[11px] text-slate-400">Used for learning</p>
         </div>
 
         {/* Upcoming Sessions */}
@@ -167,13 +179,18 @@ export function DashboardPage({ navigate }: { navigate: (path: string) => void }
             <ShieldCheck className="h-4 w-4 text-purple-400 group-hover:scale-110 transition-transform" />
           </div>
           <div className="text-2xl font-bold text-white font-['Space_Grotesk']">
-            {user?.trust_score ?? 85}%
+            {user?.trust_score != null ? `${user.trust_score}%` : 'Not calculated'}
           </div>
           <p className="text-[11px] text-slate-400 mt-1">
-            Reliability: {user?.reliability_score ?? 90}%
+            Reliability: {user?.reliability_score != null ? `${user.reliability_score}%` : 'Not calculated'}
           </p>
         </div>
       </div>
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
+        <div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-sm font-bold text-white">Recent Time Credit Transactions</h2><button onClick={() => navigate('/time-wallet')} className="text-xs font-semibold text-cyan-300 hover:text-white">View wallet</button></div>
+        {transactions.length ? <div className="space-y-2">{transactions.slice(0, 3).map((transaction) => <div key={transaction.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2 text-xs"><span className="font-semibold text-slate-200">{transaction.transaction_type} · {transaction.description}</span><span className={transaction.amount > 0 ? 'font-bold text-emerald-300' : 'font-bold text-amber-300'}>{transaction.amount > 0 ? '+' : ''}{transaction.amount} TC</span></div>)}</div> : <p className="text-xs text-slate-400">No transactions yet.</p>}
+      </section>
 
       {/* Main Grid: Upcoming Sessions & AI Recommendations */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -291,15 +308,19 @@ export function DashboardPage({ navigate }: { navigate: (path: string) => void }
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {user.learn_skills.map((s, idx) => (
                   <div key={s.id || s.name || `learn-${idx}`} className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800">
+                    {(() => {
+                      const progress = learningProgress.find((item) => item.skill_id === s.id);
+                      const percentage = Math.min(100, Math.max(0, Number(progress?.progress_percentage) || 0));
+                      return <>
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-bold text-white">{s.name}</span>
                       <span className="text-[10px] text-cyan-400 font-semibold">{s.skill_level}</span>
                     </div>
                     <div className="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-                      <div className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full rounded-full" style={{ width: '35%' }} />
+                      <div className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full rounded-full" style={{ width: `${percentage}%` }} />
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2">
-                      <span>Foundations</span>
+                      <span>{percentage > 0 ? `${percentage}% complete` : 'Not started'}</span>
                       <button 
                         onClick={() => navigate(`/quizzes`)}
                         className="text-cyan-400 hover:underline"
@@ -307,6 +328,8 @@ export function DashboardPage({ navigate }: { navigate: (path: string) => void }
                         Take Assessment
                       </button>
                     </div>
+                      </>;
+                    })()}
                   </div>
                 ))}
               </div>

@@ -86,11 +86,15 @@ export interface SessionRecord {
   status: SessionStatus;
   learning_goal: string;
   room_id: string;
-  meeting_provider?: 'GOOGLE_MEET' | 'BUILTIN';
-  meet_link?: string;
   learner_confirmed: number;
   sharer_confirmed: number;
   credit_awarded: number;
+  session_stage?: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  duration_seconds?: number;
+  verified_credits?: number;
+  verified_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -100,7 +104,7 @@ export interface CreditTransaction {
   user_id: string;
   session_id?: string;
   amount: number;
-  transaction_type: 'EARNED' | 'USED' | 'REVERSAL' | 'ADJUSTMENT';
+  transaction_type: 'EARNED' | 'USED' | 'REVERSAL' | 'ADJUSTMENT' | 'WELCOME_BONUS';
   status: string;
   description: string;
   created_at: string;

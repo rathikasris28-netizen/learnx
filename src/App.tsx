@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { Footer } from './components/Footer';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
-import { RegisterPage } from './pages/RegisterPage';
+import { RegistrationPage } from './pages/RegistrationPage';
+import { TermsPage, PrivacyPage } from './pages/LegalPages';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { OnboardingPage } from './pages/OnboardingPage';
@@ -13,7 +14,6 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DiscoverPage } from './pages/DiscoverPage';
 import { RecommendationsPage } from './pages/RecommendationsPage';
 import { SessionsPage } from './pages/SessionsPage';
-import { SessionRoomPage } from './pages/SessionRoomPage';
 import { TimeWalletPage } from './pages/TimeWalletPage';
 import { AssistantPage } from './pages/AssistantPage';
 import { QuizzesPage } from './pages/QuizzesPage';
@@ -23,9 +23,11 @@ import { AchievementsPage } from './pages/AchievementsPage';
 import { LearningPlanPage } from './pages/LearningPlanPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
-import { CoursesPage } from './pages/CoursesPage';
+import { CourseDetailPage, CoursesPage } from './pages/CoursesPage';
 import { NotesPage } from './pages/NotesPage';
-import { BootcampsPage } from './pages/BootcampsPage';
+import { BootcampDetailPage, BootcampsPage } from './pages/BootcampsPage';
+
+const SessionRoomPage = lazy(() => import('./pages/InternalSessionRoomPage').then((module) => ({ default: module.InternalSessionRoomPage })));
 
 function MainRouter() {
   const { user, loading } = useAuth();
@@ -61,13 +63,21 @@ function MainRouter() {
   } else if (currentPath === '/login') {
     pageContent = <LoginPage navigate={navigate} />;
   } else if (currentPath === '/register') {
-    pageContent = <RegisterPage navigate={navigate} />;
+    pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage navigate={navigate} />;
+  } else if (currentPath === '/register/learner') {
+    pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage role="LEARNER" navigate={navigate} />;
+  } else if (currentPath === '/register/mentor') {
+    pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage role="KNOWLEDGE_SHARER" navigate={navigate} />;
+  } else if (currentPath === '/terms') {
+    pageContent = <TermsPage navigate={navigate} />;
+  } else if (currentPath === '/privacy') {
+    pageContent = <PrivacyPage navigate={navigate} />;
   } else if (currentPath === '/verify-email') {
     pageContent = <VerifyEmailPage navigate={navigate} />;
   } else if (currentPath === '/forgot-password') {
     pageContent = <ForgotPasswordPage navigate={navigate} />;
   } else if (currentPath === '/onboarding') {
-    pageContent = <OnboardingPage navigate={navigate} />;
+    pageContent = user ? <OnboardingPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
   } else if (currentPath === '/dashboard') {
     pageContent = user ? <DashboardPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
   } else if (currentPath === '/discover' || currentPath === '/learn' || currentPath === '/skills') {
@@ -78,7 +88,11 @@ function MainRouter() {
     pageContent = user ? <SessionsPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
   } else if (currentPath.startsWith('/session-room/')) {
     const sessionId = currentPath.replace('/session-room/', '');
-    pageContent = user ? <SessionRoomPage sessionId={sessionId} navigate={navigate} /> : <LoginPage navigate={navigate} />;
+    pageContent = user ? (
+      <Suspense fallback={<div className="flex min-h-[70vh] items-center justify-center text-sm text-slate-400">Loading session room...</div>}>
+        <SessionRoomPage sessionId={sessionId} navigate={navigate} />
+      </Suspense>
+    ) : <LoginPage navigate={navigate} />;
   } else if (currentPath === '/time-wallet') {
     pageContent = user ? <TimeWalletPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
   } else if (currentPath === '/assistant') {
@@ -92,8 +106,14 @@ function MainRouter() {
     pageContent = user ? <RatingsPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
   } else if (currentPath === '/achievements') {
     pageContent = <AchievementsPage navigate={navigate} />;
+  } else if (currentPath.startsWith('/courses/')) {
+    const courseId = currentPath.replace('/courses/', '');
+    pageContent = <CourseDetailPage courseId={courseId} navigate={navigate} />;
   } else if (currentPath === '/courses' || currentPath === '/partner-courses') {
     pageContent = <CoursesPage navigate={navigate} />;
+  } else if (currentPath.startsWith('/bootcamps/')) {
+    const bootcampId = currentPath.replace('/bootcamps/', '');
+    pageContent = <BootcampDetailPage bootcampId={bootcampId} navigate={navigate} />;
   } else if (currentPath === '/bootcamps') {
     pageContent = <BootcampsPage navigate={navigate} />;
   } else if (currentPath === '/notes') {

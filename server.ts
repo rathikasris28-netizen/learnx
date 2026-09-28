@@ -1,9 +1,8 @@
+import 'dotenv/config';
+
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
-import dotenv from 'dotenv';
-
-dotenv.config();
 
 import { initDatabase } from './server/db.ts';
 import { apiRouter } from './server/routes.ts';
