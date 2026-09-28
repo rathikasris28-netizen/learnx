@@ -407,7 +407,7 @@ apiRouter.post('/auth/resend-verification', async (req: Request, res: Response) 
 apiRouter.get('/auth/me', async (req: Request, res: Response) => {
   const user = await getAuthenticatedUser(req);
   if (!user) {
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json({ error: 'This endpoint requires a valid Bearer token' });
     return;
   }
 

@@ -22,8 +22,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshUser = async () => {
     const storedId = localStorage.getItem('learnx_user_id');
-    if (!storedId) {
+    const storedToken = localStorage.getItem('learnx_token');
+    if (!storedId || !storedToken || storedToken.startsWith('local_session_')) {
+      localStorage.removeItem('learnx_user_id');
+      localStorage.removeItem('learnx_token');
       setUser(null);
+      setToken(null);
       setLoading(false);
       return;
     }
@@ -37,6 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem('learnx_user_id');
       localStorage.removeItem('learnx_token');
       setUser(null);
+      setToken(null);
     } finally {
       setLoading(false);
     }
@@ -72,11 +77,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, password })
     });
 
-    if (data.user && data.token) {
-      localStorage.setItem('learnx_user_id', data.user.user_id);
+    if (data.user && typeof data.token === 'string' && data.token && !data.token.startsWith('local_session_')) {
+      localStorage.setItem('learnx_user_id', data.user.id || data.user.user_id);
       localStorage.setItem('learnx_token', data.token);
       setToken(data.token);
       setUser(data.user);
+    } else {
+      throw new Error('Authentication service did not return a valid access token.');
     }
   };
 
@@ -86,11 +93,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: 'POST',
       body: formData
     });
-    if (data.user && data.token) {
-      localStorage.setItem('learnx_user_id', data.user.user_id);
+    if (data.user && typeof data.token === 'string' && data.token && !data.token.startsWith('local_session_')) {
+      localStorage.setItem('learnx_user_id', data.user.id || data.user.user_id);
       localStorage.setItem('learnx_token', data.token);
       setToken(data.token);
       setUser(data.user);
+    } else {
+      throw new Error('Registration response did not include a valid Supabase access token.');
     }
     return {
       user_id: data.user_id,
