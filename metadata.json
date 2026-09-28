@@ -1,0 +1,10 @@
+{
+  "name": "LearnX – Exchange. Learn. Grow.",
+  "description": "Give What You Know. Learn What You Need. Grow Together. Production peer-to-peer knowledge exchange with real AI matching, LiveKit video rooms, and verified Time Credits.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
