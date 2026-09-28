@@ -67,7 +67,7 @@ function MainRouter() {
   } else if (currentPath === '/register/learner') {
     pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage role="LEARNER" navigate={navigate} />;
   } else if (currentPath === '/register/mentor') {
-    pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage role="KNOWLEDGE_SHARER" navigate={navigate} />;
+    pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage role="MENTOR" navigate={navigate} />;
   } else if (currentPath === '/terms') {
     pageContent = <TermsPage navigate={navigate} />;
   } else if (currentPath === '/privacy') {

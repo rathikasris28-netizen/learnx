@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, BookOpen, BriefcaseBusiness, CheckCircle2, Globe2, LockKeyhole, Mail, MapPin, UserRound } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-type RegistrationRole = 'LEARNER' | 'KNOWLEDGE_SHARER';
+type RegistrationRole = 'LEARNER' | 'MENTOR';
 
 export function RegistrationPage({ role, navigate }: { role?: RegistrationRole; navigate: (path: string) => void }) {
   if (!role) return <RegistrationChooser navigate={navigate} />;
@@ -48,14 +48,28 @@ function RegistrationForm({ role, navigate }: { role: RegistrationRole; navigate
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [registration, setRegistration] = useState<{ welcome_bonus: number; balance: number } | null>(null);
+  const [registration, setRegistration] = useState<{ welcome_bonus: number; balance: number; authenticated: boolean } | null>(null);
   const strongPassword = values.password.length >= 8 && /[A-Z]/.test(values.password) && /[a-z]/.test(values.password) && /\d/.test(values.password) && /[^A-Za-z0-9]/.test(values.password);
+  const requiredFieldsValid = Boolean(
+    values.full_name.trim()
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())
+    && values.confirm_password
+    && values.age_group
+    && values.city.trim()
+    && values.state.trim()
+    && values.preferred_language
+    && values.education_status
+    && values.terms_accepted
+  );
 
   useEffect(() => {
     if (!registration) return;
-    const timeout = window.setTimeout(() => navigate('/onboarding'), 1800);
+    const destination = registration.authenticated
+      ? '/onboarding'
+      : `/login?registered=1&email=${encodeURIComponent(values.email)}`;
+    const timeout = window.setTimeout(() => navigate(destination), 1800);
     return () => window.clearTimeout(timeout);
-  }, [registration, navigate]);
+  }, [registration, navigate, values.email]);
 
   const update = (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const target = event.target;
@@ -65,7 +79,7 @@ function RegistrationForm({ role, navigate }: { role: RegistrationRole; navigate
     }));
   };
 
-  const submit = async (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
     if (values.password !== values.confirm_password) {
@@ -84,7 +98,7 @@ function RegistrationForm({ role, navigate }: { role: RegistrationRole; navigate
     try {
       const { confirm_password: _confirmPassword, ...accountData } = values;
       const result = await register(accountData, role);
-      setRegistration({ welcome_bonus: result.welcome_bonus, balance: result.balance });
+      setRegistration({ welcome_bonus: result.welcome_bonus, balance: result.balance, authenticated: result.authenticated });
     } catch (cause: any) {
       setError(cause.message || 'Registration failed. Please check your details.');
     } finally {
@@ -99,7 +113,7 @@ function RegistrationForm({ role, navigate }: { role: RegistrationRole; navigate
           <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-300" />
           <h1 className="text-xl font-bold text-white">Registration Successful!</h1>
           {learner ? <><p className="text-sm text-slate-200">Welcome to LearnX!</p><p className="text-sm font-bold text-emerald-300">You received: +{registration.welcome_bonus} Time Credits</p></> : <><p className="text-sm text-slate-200">Welcome to LearnX as a Mentor / Knowledge Sharer.</p><p className="text-sm text-slate-300">Your starting Time Credit balance: <strong className="text-white">{registration.balance}</strong></p></>}
-          <p className="text-xs text-slate-400">Taking you to onboarding...</p>
+          <p className="text-xs text-slate-400">{registration.authenticated ? 'Taking you to onboarding...' : 'Account created. Taking you to sign in...'}</p>
         </section>
       </main>
     );
@@ -120,7 +134,7 @@ function RegistrationForm({ role, navigate }: { role: RegistrationRole; navigate
       {learner ? <p className="mb-5 rounded-lg border border-amber-700/50 bg-amber-950/30 p-3 text-xs font-semibold text-amber-200">🎁 New Learners receive 5 Time Credits as a one-time welcome bonus.</p> : <p className="mb-5 rounded-lg border border-emerald-800/50 bg-emerald-950/20 p-3 text-xs text-emerald-200">Mentors start with 0 Time Credits and earn credits through verified sessions.</p>}
       {error && <p role="alert" className="mb-4 rounded-lg border border-rose-800/50 bg-rose-950/30 p-3 text-xs text-rose-200">{error}</p>}
 
-      <form onSubmit={submit} className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-5 sm:grid-cols-2 sm:p-7">
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-5 sm:grid-cols-2 sm:p-7">
         <label className="text-xs font-semibold text-slate-300">Full Name *<span className="relative mt-1.5 block"><UserRound className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" /><input required name="full_name" autoComplete="name" value={values.full_name} onChange={update} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white" /></span></label>
         <label className="text-xs font-semibold text-slate-300">Email *<span className="relative mt-1.5 block"><Mail className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" /><input required type="email" name="email" autoComplete="email" value={values.email} onChange={update} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white" /></span></label>
         <label className="text-xs font-semibold text-slate-300">Password *<span className="relative mt-1.5 block"><LockKeyhole className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" /><input required type="password" minLength={8} autoComplete="new-password" name="password" value={values.password} onChange={update} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white" /></span><span className="mt-1 block text-[10px] font-normal text-slate-500">8+ characters, uppercase, lowercase, number, and special character.</span></label>
@@ -133,7 +147,7 @@ function RegistrationForm({ role, navigate }: { role: RegistrationRole; navigate
         <label className="text-xs font-semibold text-slate-300 sm:col-span-2">Profile Photo URL <span className="text-[10px] font-normal text-slate-500">Optional</span><input type="url" name="profile_photo" value={values.profile_photo} onChange={update} placeholder="https://..." className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600" /></label>
 
         <label className="flex items-start gap-2.5 text-xs leading-relaxed text-slate-300 sm:col-span-2"><input required type="checkbox" name="terms_accepted" checked={values.terms_accepted} onChange={update} className="mt-0.5 h-4 w-4 accent-cyan-500" /><span>I have read and agree to the LearnX <button type="button" onClick={() => navigate('/terms')} className="font-semibold text-cyan-300 underline">Terms & Conditions</button> and <button type="button" onClick={() => navigate('/privacy')} className="font-semibold text-cyan-300 underline">Privacy Policy</button>.</span></label>
-        <button type="submit" disabled={loading || !values.terms_accepted || !strongPassword || values.password !== values.confirm_password} className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 px-5 py-3 text-sm font-semibold text-white hover:from-cyan-500 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">{loading ? 'Creating account...' : 'Register'}<ArrowRight className="h-4 w-4" /></button>
+        <button type="submit" disabled={loading || !requiredFieldsValid || !strongPassword || values.password !== values.confirm_password} className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 px-5 py-3 text-sm font-semibold text-white hover:from-cyan-500 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">{loading ? 'Creating account...' : 'Register'}<ArrowRight className="h-4 w-4" /></button>
       </form>
       <p className="mt-5 text-center text-xs text-slate-400">Already registered? <button onClick={() => navigate('/login')} className="font-semibold text-cyan-300 hover:text-white">Sign in</button></p>
     </main>

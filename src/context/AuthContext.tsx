@@ -7,7 +7,7 @@ interface AuthContextType {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (formData: any, role: 'LEARNER' | 'KNOWLEDGE_SHARER') => Promise<{ user_id: string; email_confirmed: boolean; role: string; welcome_bonus: number; balance: number }>;
+  register: (formData: any, role: 'LEARNER' | 'MENTOR') => Promise<{ user_id: string; email_confirmed: boolean; role: string; welcome_bonus: number; balance: number; authenticated: boolean }>;
   logout: () => void;
   refreshUser: () => Promise<void>;
   verifyEmail: (userId?: string, email?: string) => Promise<void>;
@@ -87,26 +87,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const register = async (formData: any, role: 'LEARNER' | 'KNOWLEDGE_SHARER') => {
-    const endpoint = role === 'LEARNER' ? '/auth/register/learner' : '/auth/register/mentor';
-    const data = await apiRequest(endpoint, {
+  const register = async (formData: any, role: 'LEARNER' | 'MENTOR') => {
+    const data = await apiRequest('/auth/register', {
       method: 'POST',
-      body: formData
+      body: { ...formData, role }
     });
-    if (data.user && typeof data.token === 'string' && data.token && !data.token.startsWith('local_session_')) {
+    if (!data.user) {
+      throw new Error('Registration succeeded without returning the created account profile.');
+    }
+    const authenticated = typeof data.token === 'string' && data.token.length > 0 && !data.token.startsWith('local_session_');
+    if (authenticated) {
       localStorage.setItem('learnx_user_id', data.user.id || data.user.user_id);
       localStorage.setItem('learnx_token', data.token);
       setToken(data.token);
       setUser(data.user);
     } else {
-      throw new Error('Registration response did not include a valid Supabase access token.');
+      localStorage.removeItem('learnx_user_id');
+      localStorage.removeItem('learnx_token');
+      setToken(null);
+      setUser(null);
     }
     return {
       user_id: data.user_id,
       email_confirmed: data.email_confirmed,
       role: data.role,
       welcome_bonus: data.welcome_bonus || 0,
-      balance: data.user?.wallet_balance ?? 0
+      balance: data.user.wallet_balance ?? 0,
+      authenticated
     };
   };
 

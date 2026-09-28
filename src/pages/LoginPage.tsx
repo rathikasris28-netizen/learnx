@@ -4,6 +4,7 @@ import { Mail, Lock, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react';
 
 export function LoginPage({ navigate }: { navigate: (path: string) => void }) {
   const { login } = useAuth();
+  const registrationComplete = new URLSearchParams(window.location.search).get('registered') === '1';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -149,6 +150,8 @@ export function LoginPage({ navigate }: { navigate: (path: string) => void }) {
             </div>
           </div>
         </div>
+
+        {registrationComplete && <div role="status" className="rounded-xl border border-emerald-800/50 bg-emerald-950/30 p-3 text-xs text-emerald-200">Your LearnX account was created. Sign in to continue.</div>}
 
         <p className="text-center text-xs text-slate-400">
           Don't have an account yet?{' '}

@@ -139,7 +139,7 @@ async function getAuthenticatedUser(req: Request) {
 
 type RegistrationRole = 'LEARNER' | 'KNOWLEDGE_SHARER';
 
-async function registerAccount(req: Request, res: Response, role: RegistrationRole) {
+async function registerAccount(req: Request, res: Response, fixedRole?: RegistrationRole) {
   try {
     const {
       full_name,
@@ -151,8 +151,12 @@ async function registerAccount(req: Request, res: Response, role: RegistrationRo
       preferred_language,
       education_status,
       profile_photo,
-      terms_accepted
+      terms_accepted,
+      role: requestedRole
     } = req.body;
+    const role: RegistrationRole | null = fixedRole || (
+      requestedRole === 'LEARNER' ? 'LEARNER' : requestedRole === 'MENTOR' ? 'KNOWLEDGE_SHARER' : null
+    );
     const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const passwordValid = typeof password === 'string'
       && password.length >= 8
@@ -164,10 +168,32 @@ async function registerAccount(req: Request, res: Response, role: RegistrationRo
     const allowedLanguages = ['English', 'Tamil', 'Hindi', 'Telugu', 'Malayalam', 'Kannada', 'Other'];
     const allowedEducationStatuses = ['School Student', 'College Student', 'Graduate', 'Working Professional', 'Self-Employed', 'Job Seeker', 'Other'];
 
-    if (!full_name?.trim() || !cleanEmail || !passwordValid || !age_group || !city?.trim() || !state?.trim()
-      || !allowedAgeGroups.includes(age_group) || !allowedLanguages.includes(preferred_language)
-      || !allowedEducationStatuses.includes(education_status) || terms_accepted !== true) {
-      res.status(400).json({ error: 'Complete all required fields, use a strong password, and accept the Terms & Conditions and Privacy Policy.' });
+    if (!role) {
+      res.status(400).json({ error: 'Choose Learner or Mentor registration.' });
+      return;
+    }
+    if (typeof full_name !== 'string' || !full_name.trim() || typeof email !== 'string' || !email.trim()
+      || typeof age_group !== 'string' || typeof city !== 'string' || !city.trim()
+      || typeof state !== 'string' || !state.trim() || typeof preferred_language !== 'string'
+      || typeof education_status !== 'string') {
+      res.status(400).json({ error: 'Full name, email, age group, city, state, preferred language, and education/work status are required.' });
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      res.status(400).json({ error: 'Enter a valid email address.' });
+      return;
+    }
+    if (!passwordValid) {
+      res.status(400).json({ error: 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.' });
+      return;
+    }
+    if (!allowedAgeGroups.includes(age_group) || !allowedLanguages.includes(preferred_language)
+      || !allowedEducationStatuses.includes(education_status)) {
+      res.status(400).json({ error: 'Choose a valid age group, preferred language, and education/work status.' });
+      return;
+    }
+    if (terms_accepted !== true) {
+      res.status(400).json({ error: 'Accept the Terms & Conditions and Privacy Policy to register.' });
       return;
     }
 
@@ -198,13 +224,6 @@ async function registerAccount(req: Request, res: Response, role: RegistrationRo
     }
 
     const supabaseUserId = created.user.id;
-    const { data: signedIn, error: signInError } = await supabaseAnon.auth.signInWithPassword({ email: cleanEmail, password });
-    if (signInError || !signedIn.session) {
-      await supabaseAdmin.auth.admin.deleteUser(supabaseUserId).catch(() => {});
-      res.status(503).json({ error: 'Account created, but LearnX could not establish a session. Please sign in to continue.' });
-      return;
-    }
-
     const acceptedAt = new Date().toISOString();
     let welcomeBonus = 0;
     try {
@@ -248,6 +267,16 @@ async function registerAccount(req: Request, res: Response, role: RegistrationRo
       throw databaseError;
     }
 
+    let accessToken: string | null = null;
+    try {
+      const signedIn = await supabaseAnon.auth.signInWithPassword({ email: cleanEmail, password });
+      if (!signedIn.error && signedIn.data.session?.access_token) {
+        accessToken = signedIn.data.session.access_token;
+      }
+    } catch {
+      accessToken = null;
+    }
+
     const profile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(supabaseUserId) as any;
     const wallet = db.prepare('SELECT * FROM time_credit_accounts WHERE user_id = ?').get(supabaseUserId) as any;
     res.status(201).json({
@@ -257,7 +286,8 @@ async function registerAccount(req: Request, res: Response, role: RegistrationRo
       role,
       welcome_bonus: welcomeBonus,
       email_confirmed: true,
-      token: signedIn.session.access_token,
+      authenticated: Boolean(accessToken),
+      token: accessToken,
       user: {
         id: profile.user_id,
         user_id: profile.user_id,
@@ -280,7 +310,7 @@ async function registerAccount(req: Request, res: Response, role: RegistrationRo
   }
 }
 
-apiRouter.post('/auth/register', async (req: Request, res: Response) => registerAccount(req, res, 'LEARNER'));
+apiRouter.post('/auth/register', async (req: Request, res: Response) => registerAccount(req, res));
 apiRouter.post('/auth/register/learner', async (req: Request, res: Response) => registerAccount(req, res, 'LEARNER'));
 apiRouter.post('/auth/register/mentor', async (req: Request, res: Response) => registerAccount(req, res, 'KNOWLEDGE_SHARER'));
 

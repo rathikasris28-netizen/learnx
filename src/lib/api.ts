@@ -1,4 +1,6 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '/api' : 'https://learnx-backend-heqj.onrender.com/api');
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '/api' : 'https://learnx-backend-heqj.onrender.com/api');
+const normalizedApiBase = configuredApiBase.replace(/\/+$/, '');
+const API_BASE = normalizedApiBase.endsWith('/api') ? normalizedApiBase : `${normalizedApiBase}/api`;
 
 interface ApiOptions extends Omit<RequestInit, 'body'> {
   body?: any;
@@ -23,7 +25,8 @@ export async function apiRequest<T = any>(
     ? JSON.stringify(options.body)
     : options.body;
 
-  const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${API_BASE}${normalizedEndpoint}`;
   const response = await fetch(url, {
     ...options,
     headers,
