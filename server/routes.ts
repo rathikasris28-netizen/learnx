@@ -794,10 +794,10 @@ async function registerAccount(
 apiRouter.post(
   '/auth/register',
   async (req: Request, res: Response) => {
+    console.log('[LearnX] REGISTER_ROUTE_HIT');
     await registerAccount(req, res);
   }
 );
-
 // Learner registration
 apiRouter.post(
   '/auth/register/learner',
