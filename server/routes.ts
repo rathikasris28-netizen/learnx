@@ -795,7 +795,11 @@ apiRouter.post(
   '/auth/register',
   async (req: Request, res: Response) => {
     console.log('[LearnX] REGISTER_ROUTE_HIT');
-    await registerAccount(req, res);
+    res.status(418).json({
+      debug: true,
+      route: '/auth/register',
+      message: 'REGISTER ROUTE IS WORKING'
+    });
   }
 );
 // Learner registration
