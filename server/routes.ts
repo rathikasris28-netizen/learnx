@@ -1,12 +1,16 @@
-import { Router, Request, Response } from 'express';
+ import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
+
 import { db } from './db.ts';
 import { supabaseAdmin, supabaseAnon } from './supabase.ts';
 import { createLiveKitToken, LIVEKIT_URL } from './livekit.ts';
-import { parseNaturalLanguageSearch, computeMatches, generateStructuredLearningPlan } from './ai.ts';
+import {
+  parseNaturalLanguageSearch,
+  computeMatches,
+  generateStructuredLearningPlan,
+} from './ai.ts';
 
 export const apiRouter = Router();
-
 // Health check endpoint
 apiRouter.get('/health', (_req: Request, res: Response) => {
   try {
@@ -132,202 +136,308 @@ async function getAuthenticatedUser(req: Request) {
     return null;
   }
 }
-
 // -------------------------------------------------------------
 // 1. AUTHENTICATION & PROFILE
 // -------------------------------------------------------------
 
 type RegistrationRole = 'LEARNER' | 'KNOWLEDGE_SHARER';
 
-/**
- * Register a new LearnX account.
- *
- * Authentication rules:
- * - Learner receives exactly one +5 welcome bonus.
- * - Knowledge Sharer receives 0 welcome credits.
- * - A real Supabase access token is returned when automatic sign-in succeeds.
- * - If automatic sign-in fails, registration still succeeds but requires_login=true.
- * - No fake/local session token is ever generated.
- */
+// -------------------------------------------------------------
+// Registration handler
+// -------------------------------------------------------------
+
 async function registerAccount(
   req: Request,
   res: Response,
   fixedRole?: RegistrationRole
 ) {
-  const {
-    full_name,
-    email,
-    password,
-    age_group,
-    city,
-    state,
-    preferred_language,
-    education_status,
-    profile_photo,
-    terms_accepted,
-    role: requestedRole,
-  } = req.body ?? {};
-
-  const role: RegistrationRole | null = fixedRole ?? (
-    requestedRole === 'LEARNER'
-      ? 'LEARNER'
-      : requestedRole === 'MENTOR' || requestedRole === 'KNOWLEDGE_SHARER'
-        ? 'KNOWLEDGE_SHARER'
-        : null
-  );
-
-  const cleanEmail =
-    typeof email === 'string' ? email.trim().toLowerCase() : '';
-
-  const passwordValid =
-    typeof password === 'string' &&
-    password.length >= 8 &&
-    /[A-Z]/.test(password) &&
-    /[a-z]/.test(password) &&
-    /\d/.test(password) &&
-    /[^A-Za-z0-9]/.test(password);
-
-  const allowedAgeGroups = [
-    'Under 18',
-    '18-24',
-    '25-34',
-    '35-44',
-    '45-54',
-    '55+',
-  ];
-
-  const allowedLanguages = [
-    'English',
-    'Tamil',
-    'Hindi',
-    'Telugu',
-    'Malayalam',
-    'Kannada',
-    'Other',
-  ];
-
-  const allowedEducationStatuses = [
-    'School Student',
-    'College Student',
-    'Graduate',
-    'Working Professional',
-    'Self-Employed',
-    'Job Seeker',
-    'Other',
-  ];
-
   try {
+    const {
+      full_name,
+      email,
+      password,
+      confirm_password,
+      age_group,
+      city,
+      state,
+      preferred_language,
+      education_status,
+      profile_photo,
+      terms_accepted,
+      role: requestedRole,
+    } = req.body;
+
+    // ---------------------------------------------------------
+    // ROLE
+    // ---------------------------------------------------------
+
+    const role: RegistrationRole | null =
+      fixedRole ??
+      (requestedRole === 'LEARNER'
+        ? 'LEARNER'
+        : requestedRole === 'MENTOR' ||
+            requestedRole === 'KNOWLEDGE_SHARER'
+          ? 'KNOWLEDGE_SHARER'
+          : null);
+
     if (!role) {
       res.status(400).json({
-        error: 'Choose Learner or Knowledge Sharer registration.',
+        success: false,
+        error: 'Choose Learner or Mentor registration.',
       });
       return;
     }
 
+    // ---------------------------------------------------------
+    // CLEAN INPUT
+    // ---------------------------------------------------------
+
+    const cleanFullName =
+      typeof full_name === 'string'
+        ? full_name.trim()
+        : '';
+
+    const cleanEmail =
+      typeof email === 'string'
+        ? email.trim().toLowerCase()
+        : '';
+
+    const cleanCity =
+      typeof city === 'string'
+        ? city.trim()
+        : '';
+
+    const cleanState =
+      typeof state === 'string'
+        ? state.trim()
+        : '';
+
+    // ---------------------------------------------------------
+    // ALLOWED VALUES
+    // ---------------------------------------------------------
+
+    const allowedAgeGroups = [
+      'Under 18',
+      '18-24',
+      '25-34',
+      '35-44',
+      '45-54',
+      '55+',
+    ];
+
+    const allowedLanguages = [
+      'English',
+      'Tamil',
+      'Hindi',
+      'Telugu',
+      'Malayalam',
+      'Kannada',
+      'Other',
+    ];
+
+    const allowedEducationStatuses = [
+      'School Student',
+      'College Student',
+      'Graduate',
+      'Working Professional',
+      'Self-Employed',
+      'Job Seeker',
+      'Other',
+    ];
+
+    // ---------------------------------------------------------
+    // REQUIRED FIELD VALIDATION
+    // ---------------------------------------------------------
+
     if (
-      typeof full_name !== 'string' ||
-      !full_name.trim() ||
-      typeof email !== 'string' ||
-      !email.trim() ||
+      !cleanFullName ||
+      !cleanEmail ||
+      typeof password !== 'string' ||
       typeof age_group !== 'string' ||
-      typeof city !== 'string' ||
-      !city.trim() ||
-      typeof state !== 'string' ||
-      !state.trim() ||
+      !cleanCity ||
+      !cleanState ||
       typeof preferred_language !== 'string' ||
       typeof education_status !== 'string'
     ) {
       res.status(400).json({
+        success: false,
         error:
-          'Full name, email, age group, city, state, preferred language, and education/work status are required.',
+          'Full name, email, password, age group, city, state, preferred language, and education/work status are required.',
       });
       return;
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      res.status(400).json({ error: 'Enter a valid email address.' });
+    // ---------------------------------------------------------
+    // EMAIL VALIDATION
+    // ---------------------------------------------------------
+
+    const emailRegex =
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(cleanEmail)) {
+      res.status(400).json({
+        success: false,
+        error: 'Enter a valid email address.',
+      });
       return;
     }
 
+    // ---------------------------------------------------------
+    // PASSWORD VALIDATION
+    // ---------------------------------------------------------
+
+    const passwordValid =
+      password.length >= 8 &&
+      /[A-Z]/.test(password) &&
+      /[a-z]/.test(password) &&
+      /\d/.test(password) &&
+      /[^A-Za-z0-9]/.test(password);
+
     if (!passwordValid) {
       res.status(400).json({
+        success: false,
         error:
           'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.',
       });
       return;
     }
 
+    // ---------------------------------------------------------
+    // CONFIRM PASSWORD
+    // ---------------------------------------------------------
+
     if (
-      !allowedAgeGroups.includes(age_group) ||
-      !allowedLanguages.includes(preferred_language) ||
-      !allowedEducationStatuses.includes(education_status)
+      typeof confirm_password === 'string' &&
+      confirm_password !== password
     ) {
       res.status(400).json({
-        error:
-          'Choose a valid age group, preferred language, and education/work status.',
+        success: false,
+        error: 'Passwords do not match.',
       });
       return;
     }
+
+    // ---------------------------------------------------------
+    // VALID OPTION VALIDATION
+    // ---------------------------------------------------------
+
+    if (!allowedAgeGroups.includes(age_group)) {
+      res.status(400).json({
+        success: false,
+        error: 'Choose a valid age group.',
+      });
+      return;
+    }
+
+    if (!allowedLanguages.includes(preferred_language)) {
+      res.status(400).json({
+        success: false,
+        error: 'Choose a valid preferred language.',
+      });
+      return;
+    }
+
+    if (!allowedEducationStatuses.includes(education_status)) {
+      res.status(400).json({
+        success: false,
+        error: 'Choose a valid education/work status.',
+      });
+      return;
+    }
+
+    // ---------------------------------------------------------
+    // TERMS & CONDITIONS
+    // ---------------------------------------------------------
 
     if (terms_accepted !== true) {
       res.status(400).json({
-        error: 'Accept the Terms & Conditions and Privacy Policy to register.',
+        success: false,
+        error:
+          'Accept the Terms & Conditions and Privacy Policy to register.',
       });
       return;
     }
 
-    // Check the local LearnX profile first.
+    // ---------------------------------------------------------
+    // CHECK EXISTING LOCAL ACCOUNT
+    // ---------------------------------------------------------
+
     const existingProfile = db
-      .prepare('SELECT id FROM profiles WHERE email = ?')
+      .prepare(
+        'SELECT id FROM profiles WHERE LOWER(email) = ? LIMIT 1'
+      )
       .get(cleanEmail) as any;
 
     if (existingProfile) {
       res.status(409).json({
-        error: 'An account with this email already exists.',
+        success: false,
+        error:
+          'An account with this email already exists.',
       });
       return;
     }
 
-    // Create the real Supabase Auth account.
+    // ---------------------------------------------------------
+    // CREATE SUPABASE AUTH USER
+    // ---------------------------------------------------------
+
     const { data: created, error: createError } =
       await supabaseAdmin.auth.admin.createUser({
         email: cleanEmail,
         password,
+
         email_confirm: true,
+
         app_metadata: {
           learnx_role: role,
         },
+
         user_metadata: {
-          full_name: full_name.trim(),
+          full_name: cleanFullName,
           age_group,
-          city: city.trim(),
-          state: state.trim(),
+          city: cleanCity,
+          state: cleanState,
           preferred_language,
           education_status,
+          role,
         },
       });
 
     if (createError || !created.user) {
-      const duplicateEmail = /already|registered|exists/i.test(
-        createError?.message || ''
-      );
+      const duplicateEmail =
+        /already|registered|exists/i.test(
+          createError?.message || ''
+        );
 
-      res.status(duplicateEmail ? 409 : 400).json({
-        error: duplicateEmail
-          ? 'An account with this email already exists.'
-          : createError?.message || 'Supabase account creation failed.',
-      });
+      res
+        .status(duplicateEmail ? 409 : 400)
+        .json({
+          success: false,
+          error: duplicateEmail
+            ? 'An account with this email already exists.'
+            : createError?.message ||
+              'Supabase account creation failed.',
+        });
+
       return;
     }
 
     const supabaseUserId = created.user.id;
     const acceptedAt = new Date().toISOString();
+
     let welcomeBonus = 0;
+
+    // ---------------------------------------------------------
+    // DATABASE TRANSACTION
+    // ---------------------------------------------------------
 
     try {
       db.exec('BEGIN IMMEDIATE');
 
-      // Create LearnX profile.
+      // -------------------------------------------------------
+      // PROFILE
+      // -------------------------------------------------------
+
       db.prepare(`
         INSERT INTO profiles (
           id,
@@ -345,43 +455,87 @@ async function registerAccount(
           onboarding_completed,
           terms_accepted_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
+        VALUES (
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          1,
+          0,
+          ?
+        )
       `).run(
         supabaseUserId,
         supabaseUserId,
-        full_name.trim(),
+        cleanFullName,
         cleanEmail,
         age_group,
-        city.trim(),
-        state.trim(),
+        cleanCity,
+        cleanState,
         preferred_language,
         education_status,
-        typeof profile_photo === 'string' ? profile_photo.trim() : '',
+        typeof profile_photo === 'string'
+          ? profile_photo.trim()
+          : '',
         role,
         acceptedAt
       );
 
-      // Every account gets exactly one wallet.
+      // -------------------------------------------------------
+      // TIME CREDIT ACCOUNT
+      // -------------------------------------------------------
+
       db.prepare(`
-        INSERT OR IGNORE INTO time_credit_accounts
-          (id, user_id, balance, total_earned, total_spent)
+        INSERT OR IGNORE INTO time_credit_accounts (
+          id,
+          user_id,
+          balance,
+          total_earned,
+          total_spent
+        )
         VALUES (?, ?, 0, 0, 0)
-      `).run(`tc-${supabaseUserId}`, supabaseUserId);
+      `).run(
+        `tc-${supabaseUserId}`,
+        supabaseUserId
+      );
 
-      // ONLY a new Learner receives the +5 welcome bonus.
-      // The deterministic transaction ID makes this operation idempotent.
+      // -------------------------------------------------------
+      // LEARNER WELCOME BONUS
+      // -------------------------------------------------------
+
       if (role === 'LEARNER') {
-        const welcomeTransactionId = `welcome-${supabaseUserId}`;
-
-        const bonus = db
+        const bonusTransaction = db
           .prepare(`
-            INSERT OR IGNORE INTO credit_transactions
-              (id, user_id, amount, transaction_type, status, description)
-            VALUES (?, ?, 5, 'WELCOME_BONUS', 'COMPLETED', 'New Learner Welcome Bonus')
+            INSERT OR IGNORE INTO credit_transactions (
+              id,
+              user_id,
+              amount,
+              transaction_type,
+              status,
+              description
+            )
+            VALUES (
+              ?,
+              ?,
+              5,
+              'WELCOME_BONUS',
+              'COMPLETED',
+              'New Learner Welcome Bonus'
+            )
           `)
-          .run(welcomeTransactionId, supabaseUserId);
+          .run(
+            crypto.randomUUID(),
+            supabaseUserId
+          );
 
-        if (Number(bonus.changes) === 1) {
+        if (Number(bonusTransaction.changes) === 1) {
           db.prepare(`
             UPDATE time_credit_accounts
             SET
@@ -389,32 +543,84 @@ async function registerAccount(
               total_earned = total_earned + 5,
               updated_at = ?
             WHERE user_id = ?
-          `).run(acceptedAt, supabaseUserId);
+          `).run(
+            acceptedAt,
+            supabaseUserId
+          );
 
           welcomeBonus = 5;
         }
       }
 
-      // Default availability. This is reference/default state only;
-      // no fake sessions or activity are created.
-      db.prepare(`
-        INSERT OR IGNORE INTO user_availability
-          (id, user_id, status, available_from, available_until)
-        VALUES (?, ?, 'ACTIVE', '18:00:00', '21:00:00')
-      `).run(`av-${supabaseUserId}`, supabaseUserId);
-
-      // Initial trust/reliability record. It does not represent a rating
-      // or completed session and does not create activity history.
-      db.prepare(`
-        INSERT OR IGNORE INTO trust_scores
-          (id, user_id, score, reliability_score, verification_level)
-        VALUES (?, ?, 85, 90, 'COMMUNITY_VERIFIED')
-      `).run(`ts-${supabaseUserId}`, supabaseUserId);
+      // -------------------------------------------------------
+      // DEFAULT AVAILABILITY
+      // -------------------------------------------------------
 
       db.prepare(`
-        INSERT INTO notifications
-          (id, user_id, title, message, type, link)
-        VALUES (?, ?, ?, ?, 'SYSTEM', '/onboarding')
+        INSERT OR IGNORE INTO user_availability (
+          id,
+          user_id,
+          status,
+          available_from,
+          available_until
+        )
+        VALUES (
+          ?,
+          ?,
+          'ACTIVE',
+          '18:00:00',
+          '21:00:00'
+        )
+      `).run(
+        `av-${supabaseUserId}`,
+        supabaseUserId
+      );
+
+      // -------------------------------------------------------
+      // TRUST SCORE
+      // -------------------------------------------------------
+
+      db.prepare(`
+        INSERT OR IGNORE INTO trust_scores (
+          id,
+          user_id,
+          score,
+          reliability_score,
+          verification_level
+        )
+        VALUES (
+          ?,
+          ?,
+          85,
+          90,
+          'COMMUNITY_VERIFIED'
+        )
+      `).run(
+        `ts-${supabaseUserId}`,
+        supabaseUserId
+      );
+
+      // -------------------------------------------------------
+      // WELCOME NOTIFICATION
+      // -------------------------------------------------------
+
+      db.prepare(`
+        INSERT INTO notifications (
+          id,
+          user_id,
+          title,
+          message,
+          type,
+          link
+        )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          ?,
+          'SYSTEM',
+          '/onboarding'
+        )
       `).run(
         crypto.randomUUID(),
         supabaseUserId,
@@ -422,103 +628,193 @@ async function registerAccount(
         'Complete your onboarding to personalize your experience.'
       );
 
+      // -------------------------------------------------------
+      // AUDIT LOG
+      // -------------------------------------------------------
+
       db.prepare(`
-        INSERT INTO audit_logs
-          (id, actor_id, action, target_type, target_id, details_json)
-        VALUES (?, ?, 'USER_REGISTER', 'USER', ?, ?)
+        INSERT INTO audit_logs (
+          id,
+          actor_id,
+          action,
+          target_type,
+          target_id,
+          details_json
+        )
+        VALUES (
+          ?,
+          ?,
+          'USER_REGISTER',
+          'USER',
+          ?,
+          ?
+        )
       `).run(
         crypto.randomUUID(),
         supabaseUserId,
         supabaseUserId,
-        JSON.stringify({ email: cleanEmail, role })
+        JSON.stringify({
+          email: cleanEmail,
+          role,
+        })
       );
 
       db.exec('COMMIT');
     } catch (databaseError) {
-      db.exec('ROLLBACK');
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // Ignore rollback error
+      }
 
-      // Keep Supabase and the LearnX local database consistent.
-      await supabaseAdmin.auth.admin.deleteUser(supabaseUserId).catch(() => {});
+      await supabaseAdmin.auth.admin
+        .deleteUser(supabaseUserId)
+        .catch(() => {});
 
       throw databaseError;
     }
 
-    // Automatically sign in with Supabase so the frontend receives
-    // a REAL access token immediately after registration.
+    // ---------------------------------------------------------
+    // SIGN IN AND GET REAL SUPABASE ACCESS TOKEN
+    // ---------------------------------------------------------
+
     let accessToken: string | null = null;
 
     try {
-      const signedIn = await supabaseAnon.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
+      const signedIn =
+        await supabaseAnon.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
 
-      if (!signedIn.error && signedIn.data.session?.access_token) {
-        accessToken = signedIn.data.session.access_token;
+      if (
+        !signedIn.error &&
+        signedIn.data.session?.access_token
+      ) {
+        accessToken =
+          signedIn.data.session.access_token;
       }
     } catch {
       accessToken = null;
     }
 
+    // ---------------------------------------------------------
+    // FETCH CREATED PROFILE
+    // ---------------------------------------------------------
+
     const profile = db
-      .prepare('SELECT * FROM profiles WHERE user_id = ?')
+      .prepare(
+        'SELECT * FROM profiles WHERE user_id = ?'
+      )
       .get(supabaseUserId) as any;
 
     const wallet = db
-      .prepare('SELECT * FROM time_credit_accounts WHERE user_id = ?')
+      .prepare(
+        'SELECT * FROM time_credit_accounts WHERE user_id = ?'
+      )
       .get(supabaseUserId) as any;
 
-    const authenticated = Boolean(accessToken);
+    // ---------------------------------------------------------
+    // RESPONSE
+    // ---------------------------------------------------------
 
     res.status(201).json({
       success: true,
-      message: authenticated
-        ? 'Registration successful.'
-        : 'Registration successful. Please log in to continue.',
+      message: 'Registration successful.',
+
       user_id: supabaseUserId,
+
       role,
+
       welcome_bonus: welcomeBonus,
-      balance: wallet?.balance ?? 0,
+
       email_confirmed: true,
-      authenticated,
-      requires_login: !authenticated,
+
+      authenticated: Boolean(accessToken),
+
       token: accessToken,
+
       user: {
         id: profile.user_id,
         user_id: profile.user_id,
         email: profile.email,
         full_name: profile.full_name,
         role: profile.role,
+
         is_email_verified: true,
+
         onboarding_completed: false,
-        preferred_language: profile.preferred_language,
+
+        preferred_language:
+          profile.preferred_language,
+
         city: profile.city,
+
         state: profile.state,
-        profile_photo: profile.profile_photo,
-        wallet_balance: wallet?.balance ?? 0,
-        total_earned_credits: wallet?.total_earned ?? 0,
-        total_spent_credits: wallet?.total_spent ?? 0,
+
+        profile_photo:
+          profile.profile_photo,
+
+        wallet_balance:
+          Number(wallet?.balance ?? 0),
+
+        total_earned_credits:
+          Number(wallet?.total_earned ?? 0),
+
+        total_spent_credits:
+          Number(wallet?.total_spent ?? 0),
       },
     });
   } catch (err: any) {
+    console.error(
+      '[LearnX] Registration error:',
+      err
+    );
+
     res.status(500).json({
-      error: err?.message || 'Failed to complete registration.',
+      success: false,
+      error:
+        err?.message ||
+        'Failed to complete registration.',
     });
   }
 }
 
-apiRouter.post('/auth/register', async (req: Request, res: Response) =>
-  registerAccount(req, res)
+// -------------------------------------------------------------
+// REGISTRATION ROUTES
+// -------------------------------------------------------------
+
+// General registration route
+apiRouter.post(
+  '/auth/register',
+  async (req: Request, res: Response) => {
+    await registerAccount(req, res);
+  }
 );
 
-apiRouter.post('/auth/register/learner', async (req: Request, res: Response) =>
-  registerAccount(req, res, 'LEARNER')
+// Learner registration
+apiRouter.post(
+  '/auth/register/learner',
+  async (req: Request, res: Response) => {
+    await registerAccount(
+      req,
+      res,
+      'LEARNER'
+    );
+  }
 );
 
-apiRouter.post('/auth/register/mentor', async (req: Request, res: Response) =>
-  registerAccount(req, res, 'KNOWLEDGE_SHARER')
+// Mentor / Knowledge Sharer registration
+apiRouter.post(
+  '/auth/register/mentor',
+  async (req: Request, res: Response) => {
+    await registerAccount(
+      req,
+      res,
+      'KNOWLEDGE_SHARER'
+    );
+  }
 );
-
 apiRouter.post('/auth/login', async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
