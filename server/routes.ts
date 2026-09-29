@@ -1,4 +1,4 @@
- import { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 
 import { db } from './db.ts';
@@ -151,6 +151,12 @@ async function registerAccount(
   res: Response,
   fixedRole?: RegistrationRole
 ) {
+  console.log('[LearnX] REGISTER_ACCOUNT_REACHED', {
+  path: req.path,
+  method: req.method,
+  fixedRole,
+  bodyKeys: Object.keys(req.body || {}),
+});
   try {
     const {
       full_name,
