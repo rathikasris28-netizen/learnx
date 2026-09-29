@@ -386,21 +386,30 @@ export function OnboardingPage({
      VALIDATION
   ===================================================== */
 
+  const validateShareSkills = () => {
+    const incompleteSkill = shareSkills.find(
+      (skill) =>
+        !skill.experience.trim() ||
+        !skill.description.trim() ||
+        skill.languages.length === 0
+    );
+
+    if (incompleteSkill) {
+      return `Complete the experience, languages, and description for ${incompleteSkill.name}.`;
+    }
+
+    return '';
+  };
+
   const validateMentor = () => {
     if (shareSkills.length === 0) {
       return 'Select at least one skill that you can share.';
     }
 
-    const incompleteSkill =
-      shareSkills.find(
-        (skill) =>
-          !skill.experience.trim() ||
-          !skill.description.trim() ||
-          skill.languages.length === 0
-      );
+    const shareError = validateShareSkills();
 
-    if (incompleteSkill) {
-      return `Complete the experience, languages, and description for ${incompleteSkill.name}.`;
+    if (shareError) {
+      return shareError;
     }
 
     if (
@@ -420,6 +429,12 @@ export function OnboardingPage({
 
     if (!learningGoal.trim()) {
       return 'Please enter your learning goal.';
+    }
+
+    const shareError = validateShareSkills();
+
+    if (shareError) {
+      return shareError;
     }
 
     if (
@@ -454,56 +469,51 @@ export function OnboardingPage({
 
     try {
       const payload = {
-        learn_skills: isMentor
-          ? []
-          : learnSkills,
+        /*
+         * IMPORTANT:
+         * Both roles can LEARN and SHARE.
+         * Registration role does not remove either capability.
+         */
+        learn_skills: learnSkills,
 
-        share_skills: isMentor
-          ? shareSkills
-          : [],
+        share_skills: shareSkills,
 
         availability,
 
         bio: bio.trim(),
 
-        learning_goal: isMentor
-          ? ''
-          : learningGoal.trim(),
+        learning_goal:
+          learningGoal.trim(),
 
-        target_skill_level: isMentor
-          ? null
-          : targetSkillLevel,
+        target_skill_level:
+          targetSkillLevel,
 
-        learning_schedule: isMentor
-          ? null
-          : learningSchedule,
+        learning_schedule:
+          learningSchedule,
 
-        learning_interests: isMentor
-          ? ''
-          : learningInterests.trim(),
+        learning_interests:
+          learningInterests.trim(),
 
         preferred_language:
           preferredLanguage,
 
-        mentor_experience: isMentor
-          ? shareSkills
-              .map((skill) =>
-                skill.experience.trim()
-              )
-              .filter(Boolean)
-              .join('; ')
-          : '',
+        mentor_experience:
+          shareSkills
+            .map((skill) =>
+              skill.experience.trim()
+            )
+            .filter(Boolean)
+            .join('; '),
 
-        mentor_languages: isMentor
-          ? Array.from(
-              new Set(
-                shareSkills.flatMap(
-                  (skill) =>
-                    skill.languages
-                )
+        mentor_languages:
+          Array.from(
+            new Set(
+              shareSkills.flatMap(
+                (skill) =>
+                  skill.languages
               )
             )
-          : [],
+          ),
       };
 
       await apiRequest('/onboarding', {
@@ -612,88 +622,227 @@ export function OnboardingPage({
   };
 
   /* =====================================================
-     LEARNER STEP
+     LEARN SKILLS STEP
   ===================================================== */
 
-  const renderLearnerSkillsStep =
-    () => (
-      <div className="space-y-6">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-xl backdrop-blur-md">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="flex items-center gap-2 text-base font-bold text-white">
-                <BookOpen className="h-4 w-4 text-cyan-400" />
-                What skills do you want to learn?
-              </h2>
+  const renderLearnerSkillsStep = () => (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-xl backdrop-blur-md">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-bold text-white">
+              <BookOpen className="h-4 w-4 text-cyan-400" />
+              What skills do you want to learn?
+            </h2>
 
-              <p className="mt-0.5 text-xs text-slate-400">
-                Select one or more skills and specify your current level.
-              </p>
-            </div>
-
-            <span className="text-xs font-semibold text-cyan-400">
-              {learnSkills.length} selected
-            </span>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Select one or more skills and specify your current level.
+            </p>
           </div>
 
-          {aiSuggested.filter(
-            (item) =>
-              item.type === 'LEARN'
-          ).length > 0 && (
-            <div className="mb-6 rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-4">
-              <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-cyan-300">
-                <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-                AI Suggestions
-              </div>
+          <span className="text-xs font-semibold text-cyan-400">
+            {learnSkills.length} selected
+          </span>
+        </div>
 
-              <div className="flex flex-wrap gap-2">
-                {aiSuggested
-                  .filter(
-                    (item) =>
-                      item.type ===
-                      'LEARN'
-                  )
-                  .map((item) => (
-                    <div
-                      key={`${item.type}-${item.name}`}
-                      className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2 text-xs"
-                    >
-                      <span className="font-semibold text-white">
-                        {item.name}
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          acceptAiSuggestion(
-                            item
-                          )
-                        }
-                        className="flex items-center gap-1 rounded bg-cyan-500 px-2 py-1 text-[10px] font-semibold text-white"
-                      >
-                        <Plus className="h-3 w-3" />
-                        Add
-                      </button>
-                    </div>
-                  ))}
-              </div>
+        {aiSuggested.filter(
+          (item) =>
+            item.type === 'LEARN'
+        ).length > 0 && (
+          <div className="mb-6 rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-4">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-cyan-300">
+              <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+              AI Suggestions
             </div>
-          )}
 
-          {renderSkillGrid('learn')}
-
-          {learnSkills.length > 0 && (
-            <div className="mt-6 space-y-3 border-t border-slate-800 pt-5">
-              <h3 className="mb-3 text-xs font-semibold text-slate-300">
-                Starting Level
-              </h3>
-
-              {learnSkills.map(
-                (skill) => (
+            <div className="flex flex-wrap gap-2">
+              {aiSuggested
+                .filter(
+                  (item) =>
+                    item.type === 'LEARN'
+                )
+                .map((item) => (
                   <div
-                    key={skill.skill_id}
-                    className="flex flex-col gap-2 rounded-xl border border-slate-800/80 bg-slate-950/60 p-3 sm:flex-row sm:items-center sm:justify-between"
+                    key={`${item.type}-${item.name}`}
+                    className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2 text-xs"
                   >
+                    <span className="font-semibold text-white">
+                      {item.name}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        acceptAiSuggestion(
+                          item
+                        )
+                      }
+                      className="flex items-center gap-1 rounded bg-cyan-500 px-2 py-1 text-[10px] font-semibold text-white"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add
+                    </button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {renderSkillGrid('learn')}
+
+        {learnSkills.length > 0 && (
+          <div className="mt-6 space-y-3 border-t border-slate-800 pt-5">
+            <h3 className="mb-3 text-xs font-semibold text-slate-300">
+              Starting Level
+            </h3>
+
+            {learnSkills.map(
+              (skill) => (
+                <div
+                  key={skill.skill_id}
+                  className="flex flex-col gap-2 rounded-xl border border-slate-800/80 bg-slate-950/60 p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="text-xs font-bold text-white">
+                    {skill.name}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {LEVELS.map(
+                      (level) => (
+                        <button
+                          key={level}
+                          type="button"
+                          onClick={() =>
+                            updateLearnLevel(
+                              skill.skill_id,
+                              level
+                            )
+                          }
+                          className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold ${
+                            skill.level ===
+                            level
+                              ? 'bg-cyan-500 text-white'
+                              : 'bg-slate-900 text-slate-400'
+                          }`}
+                        >
+                          {level}
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            if (
+              learnSkills.length ===
+              0
+            ) {
+              setFormError(
+                'Select at least one skill before continuing.'
+              );
+              return;
+            }
+
+            setFormError('');
+            setStep(2);
+          }}
+          disabled={loadingSkills}
+          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-xs font-semibold text-white shadow-md disabled:opacity-40"
+        >
+          Next: Skills You Can Share
+          <ArrowRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+
+  /* =====================================================
+     SHARE SKILLS STEP
+  ===================================================== */
+
+  const renderShareSkillsStep = () => (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-xl backdrop-blur-md">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-bold text-white">
+              <Share2 className="h-4 w-4 text-emerald-400" />
+              What knowledge can you share?
+            </h2>
+
+            <p className="mt-0.5 text-xs text-slate-400">
+              Sharing knowledge is optional for Learners. Verified knowledge sharing earns Time Credits according to actual session duration.
+            </p>
+          </div>
+
+          <span className="text-xs font-semibold text-emerald-400">
+            {shareSkills.length} selected
+          </span>
+        </div>
+
+        {aiSuggested.filter(
+          (item) =>
+            item.type === 'SHARE'
+        ).length > 0 && (
+          <div className="mb-6 rounded-xl border border-emerald-500/20 bg-emerald-950/20 p-4">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-emerald-300">
+              <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+              AI Suggestions
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {aiSuggested
+                .filter(
+                  (item) =>
+                    item.type ===
+                    'SHARE'
+                )
+                .map((item) => (
+                  <div
+                    key={`${item.type}-${item.name}`}
+                    className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2 text-xs"
+                  >
+                    <span className="font-semibold text-white">
+                      {item.name}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        acceptAiSuggestion(
+                          item
+                        )
+                      }
+                      className="flex items-center gap-1 rounded bg-emerald-500 px-2 py-1 text-[10px] font-semibold text-white"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add
+                    </button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {renderSkillGrid('share')}
+
+        {shareSkills.length > 0 && (
+          <div className="mt-6 space-y-3 border-t border-slate-800 pt-5">
+            {shareSkills.map(
+              (skill) => (
+                <div
+                  key={skill.skill_id}
+                  className="space-y-3 rounded-xl border border-slate-800/80 bg-slate-950/60 p-4"
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-xs font-bold text-white">
                       {skill.name}
                     </div>
@@ -705,7 +854,7 @@ export function OnboardingPage({
                             key={level}
                             type="button"
                             onClick={() =>
-                              updateLearnLevel(
+                              updateShareLevel(
                                 skill.skill_id,
                                 level
                               )
@@ -713,7 +862,7 @@ export function OnboardingPage({
                             className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold ${
                               skill.level ===
                               level
-                                ? 'bg-cyan-500 text-white'
+                                ? 'bg-emerald-500 text-white'
                                 : 'bg-slate-900 text-slate-400'
                             }`}
                           >
@@ -723,276 +872,186 @@ export function OnboardingPage({
                       )}
                     </div>
                   </div>
-                )
-              )}
-            </div>
-          )}
-        </div>
 
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => {
-              if (
-                learnSkills.length ===
-                0
-              ) {
-                setFormError(
-                  'Select at least one skill before continuing.'
-                );
-                return;
-              }
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="text-[11px] text-slate-300">
+                      Experience *
+                      <input
+                        value={
+                          skill.experience
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          updateShareDetails(
+                            skill.skill_id,
+                            'experience',
+                            event.target
+                              .value
+                          )
+                        }
+                        placeholder="e.g. 3 years"
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+                      />
+                    </label>
 
-              setFormError('');
-              setStep(2);
-            }}
-            disabled={loadingSkills}
-            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-xs font-semibold text-white shadow-md disabled:opacity-40"
-          >
-            Next: Skills You Can Share
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-    );
-
-  /* =====================================================
-     SHARE SKILLS STEP
-  ===================================================== */
-
-  const renderShareSkillsStep =
-    () => (
-      <div className="space-y-6">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-xl backdrop-blur-md">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="flex items-center gap-2 text-base font-bold text-white">
-                <Share2 className="h-4 w-4 text-emerald-400" />
-                What knowledge can you share?
-              </h2>
-
-              <p className="mt-0.5 text-xs text-slate-400">
-                Verified knowledge sharing earns Time Credits according to actual session duration.
-              </p>
-            </div>
-
-            <span className="text-xs font-semibold text-emerald-400">
-              {shareSkills.length} selected
-            </span>
-          </div>
-
-          {renderSkillGrid('share')}
-
-          {shareSkills.length > 0 && (
-            <div className="mt-6 space-y-3 border-t border-slate-800 pt-5">
-              {shareSkills.map(
-                (skill) => (
-                  <div
-                    key={skill.skill_id}
-                    className="space-y-3 rounded-xl border border-slate-800/80 bg-slate-950/60 p-4"
-                  >
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="text-xs font-bold text-white">
-                        {skill.name}
-                      </div>
-
-                      <div className="flex flex-wrap gap-1.5">
-                        {LEVELS.map(
-                          (level) => (
-                            <button
-                              key={level}
-                              type="button"
-                              onClick={() =>
-                                updateShareLevel(
-                                  skill.skill_id,
-                                  level
-                                )
+                    <label className="text-[11px] text-slate-300">
+                      Languages *
+                      <select
+                        multiple
+                        value={
+                          skill.languages
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          updateShareDetails(
+                            skill.skill_id,
+                            'languages',
+                            Array.from(
+                              event.target
+                                .selectedOptions,
+                              (option) =>
+                                option.value
+                            )
+                          )
+                        }
+                        className="mt-1 h-20 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+                      >
+                        {LANGUAGES.map(
+                          (
+                            language
+                          ) => (
+                            <option
+                              key={
+                                language
                               }
-                              className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold ${
-                                skill.level ===
-                                level
-                                  ? 'bg-emerald-500 text-white'
-                                  : 'bg-slate-900 text-slate-400'
-                              }`}
+                              value={
+                                language
+                              }
                             >
-                              {level}
-                            </button>
+                              {language}
+                            </option>
                           )
                         )}
-                      </div>
-                    </div>
+                      </select>
+                    </label>
 
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="text-[11px] text-slate-300">
-                        Experience *
-                        <input
-                          value={
-                            skill.experience
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            updateShareDetails(
-                              skill.skill_id,
-                              'experience',
-                              event.target
-                                .value
-                            )
-                          }
-                          placeholder="e.g. 3 years"
-                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
-                        />
-                      </label>
+                    <label className="text-[11px] text-slate-300 sm:col-span-2">
+                      Skill Description *
+                      <textarea
+                        value={
+                          skill.description
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          updateShareDetails(
+                            skill.skill_id,
+                            'description',
+                            event.target
+                              .value
+                          )
+                        }
+                        rows={2}
+                        placeholder={`Describe what you can teach in ${skill.name}`}
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+                      />
+                    </label>
 
-                      <label className="text-[11px] text-slate-300">
-                        Languages *
-                        <select
-                          multiple
-                          value={
-                            skill.languages
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            updateShareDetails(
-                              skill.skill_id,
-                              'languages',
-                              Array.from(
-                                event.target
-                                  .selectedOptions,
-                                (option) =>
-                                  option.value
-                              )
-                            )
-                          }
-                          className="mt-1 h-20 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
-                        >
-                          {LANGUAGES.map(
-                            (language) => (
-                              <option
-                                key={
-                                  language
-                                }
-                                value={
-                                  language
-                                }
-                              >
-                                {language}
-                              </option>
-                            )
-                          )}
-                        </select>
-                      </label>
+                    <label className="flex items-center gap-2 text-[11px] text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={
+                          skill.beginner_friendly
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          updateShareDetails(
+                            skill.skill_id,
+                            'beginner_friendly',
+                            event.target
+                              .checked
+                          )
+                        }
+                        className="accent-emerald-500"
+                      />
+                      Beginner-friendly
+                    </label>
 
-                      <label className="text-[11px] text-slate-300 sm:col-span-2">
-                        Skill Description *
-                        <textarea
-                          value={
-                            skill.description
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            updateShareDetails(
-                              skill.skill_id,
-                              'description',
-                              event.target
-                                .value
-                            )
-                          }
-                          rows={2}
-                          placeholder={`Describe what you can teach in ${skill.name}`}
-                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
-                        />
-                      </label>
-
-                      <label className="flex items-center gap-2 text-[11px] text-slate-300">
-                        <input
-                          type="checkbox"
-                          checked={
-                            skill.beginner_friendly
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            updateShareDetails(
-                              skill.skill_id,
-                              'beginner_friendly',
-                              event.target
-                                .checked
-                            )
-                          }
-                          className="accent-emerald-500"
-                        />
-                        Beginner-friendly
-                      </label>
-
-                      <label className="text-[11px] text-slate-300">
-                        SkillProof information
-                        <input
-                          value={
-                            skill.skill_proof
-                          }
-                          onChange={(
-                            event
-                          ) =>
-                            updateShareDetails(
-                              skill.skill_id,
-                              'skill_proof',
-                              event.target
-                                .value
-                            )
-                          }
-                          placeholder="Credential or evidence description"
-                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
-                        />
-                      </label>
-                    </div>
+                    <label className="text-[11px] text-slate-300">
+                      SkillProof information
+                      <input
+                        value={
+                          skill.skill_proof
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          updateShareDetails(
+                            skill.skill_id,
+                            'skill_proof',
+                            event.target
+                              .value
+                          )
+                        }
+                        placeholder="Credential or evidence description"
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+                      />
+                    </label>
                   </div>
-                )
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between">
-          {!isMentor && (
-            <button
-              type="button"
-              onClick={() => {
-                setFormError('');
-                setStep(1);
-              }}
-              className="rounded-xl px-4 py-2 text-xs text-slate-400 hover:text-white"
-            >
-              Back
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              if (
-                shareSkills.length ===
-                0
-              ) {
-                setFormError(
-                  'Select at least one skill that you can share.'
-                );
-                return;
-              }
-
-              setFormError('');
-              setStep(3);
-            }}
-            className="ml-auto flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-xs font-semibold text-white shadow-md"
-          >
-            Next: Availability
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
+                </div>
+              )
+            )}
+          </div>
+        )}
       </div>
-    );
+
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => {
+            setFormError('');
+            setStep(1);
+          }}
+          className="rounded-xl px-4 py-2 text-xs text-slate-400 hover:text-white"
+        >
+          Back
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (
+              isMentor &&
+              shareSkills.length === 0
+            ) {
+              setFormError(
+                'Select at least one skill that you can share.'
+              );
+              return;
+            }
+
+            const shareError =
+              validateShareSkills();
+
+            if (shareError) {
+              setFormError(shareError);
+              return;
+            }
+
+            setFormError('');
+            setStep(3);
+          }}
+          className="ml-auto flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-xs font-semibold text-white shadow-md"
+        >
+          Next: Availability
+          <ArrowRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
 
   /* =====================================================
      FINAL STEP
@@ -1005,166 +1064,171 @@ export function OnboardingPage({
           <h2 className="flex items-center gap-2 text-base font-bold text-white">
             <Clock className="h-4 w-4 text-cyan-400" />
 
-            {isMentor
-              ? 'Mentor Availability & Profile'
-              : 'Learning Plan & Availability'}
+            Learning, Availability & Profile
           </h2>
 
           <p className="mt-0.5 text-xs text-slate-400">
-            {isMentor
-              ? 'Set when learners can request sessions with you.'
-              : 'Set your learning goal and preferred schedule.'}
+            Review your learning interests, sharing availability, and profile information.
           </p>
         </div>
 
-        {isMentor ? (
+        {isMentor && (
           <div className="rounded-lg border border-emerald-800/50 bg-emerald-950/20 p-3 text-xs text-emerald-200">
             Mentors start with 0 Time Credits.
             Credits are earned only through
             verified knowledge-sharing sessions.
           </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="text-xs font-semibold text-slate-300 sm:col-span-2">
-              What do you want to learn? *
-              <textarea
-                rows={2}
-                value={learningGoal}
-                onChange={(event) =>
-                  setLearningGoal(
-                    event.target.value
-                  )
-                }
-                placeholder="Describe the outcome you are working toward"
-                className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
-              />
-            </label>
-
-            <label className="text-xs font-semibold text-slate-300">
-              Target Skill Level
-              <select
-                value={targetSkillLevel}
-                onChange={(event) =>
-                  setTargetSkillLevel(
-                    event.target
-                      .value as SkillLevel
-                  )
-                }
-                className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
-              >
-                {LEVELS.map(
-                  (level) => (
-                    <option
-                      key={level}
-                      value={level}
-                    >
-                      {level}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label className="text-xs font-semibold text-slate-300">
-              Preferred Language
-              <select
-                value={preferredLanguage}
-                onChange={(event) =>
-                  setPreferredLanguage(
-                    event.target.value
-                  )
-                }
-                className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
-              >
-                {LANGUAGES.map(
-                  (language) => (
-                    <option
-                      key={language}
-                      value={language}
-                    >
-                      {language}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label className="text-xs font-semibold text-slate-300">
-              Preferred Schedule
-              <select
-                value={learningSchedule}
-                onChange={(event) =>
-                  setLearningSchedule(
-                    event.target.value
-                  )
-                }
-                className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
-              >
-                <option>
-                  Flexible
-                </option>
-                <option>
-                  Weekday mornings
-                </option>
-                <option>
-                  Weekday evenings
-                </option>
-                <option>
-                  Weekends
-                </option>
-              </select>
-            </label>
-
-            <label className="text-xs font-semibold text-slate-300">
-              Learning Interests
-              <textarea
-                rows={2}
-                value={learningInterests}
-                onChange={(event) =>
-                  setLearningInterests(
-                    event.target.value
-                  )
-                }
-                placeholder="Topics or projects you are interested in"
-                className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
-              />
-            </label>
-          </div>
         )}
 
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="text-xs font-semibold text-slate-300 sm:col-span-2">
+            What do you want to learn?
+            {isMentor
+              ? ' (Optional)'
+              : ' *'}
+
+            <textarea
+              rows={2}
+              value={learningGoal}
+              onChange={(event) =>
+                setLearningGoal(
+                  event.target.value
+                )
+              }
+              placeholder="Describe the outcome you are working toward"
+              className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+            />
+          </label>
+
+          <label className="text-xs font-semibold text-slate-300">
+            Target Skill Level
+
+            <select
+              value={targetSkillLevel}
+              onChange={(event) =>
+                setTargetSkillLevel(
+                  event.target
+                    .value as SkillLevel
+                )
+              }
+              className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+            >
+              {LEVELS.map(
+                (level) => (
+                  <option
+                    key={level}
+                    value={level}
+                  >
+                    {level}
+                  </option>
+                )
+              )}
+            </select>
+          </label>
+
+          <label className="text-xs font-semibold text-slate-300">
+            Preferred Language
+
+            <select
+              value={preferredLanguage}
+              onChange={(event) =>
+                setPreferredLanguage(
+                  event.target.value
+                )
+              }
+              className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+            >
+              {LANGUAGES.map(
+                (language) => (
+                  <option
+                    key={language}
+                    value={language}
+                  >
+                    {language}
+                  </option>
+                )
+              )}
+            </select>
+          </label>
+
+          <label className="text-xs font-semibold text-slate-300">
+            Preferred Schedule
+
+            <select
+              value={learningSchedule}
+              onChange={(event) =>
+                setLearningSchedule(
+                  event.target.value
+                )
+              }
+              className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+            >
+              <option>
+                Flexible
+              </option>
+
+              <option>
+                Weekday mornings
+              </option>
+
+              <option>
+                Weekday evenings
+              </option>
+
+              <option>
+                Weekends
+              </option>
+            </select>
+          </label>
+
+          <label className="text-xs font-semibold text-slate-300">
+            Learning Interests
+
+            <textarea
+              rows={2}
+              value={learningInterests}
+              onChange={(event) =>
+                setLearningInterests(
+                  event.target.value
+                )
+              }
+              placeholder="Topics or projects you are interested in"
+              className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+            />
+          </label>
+        </div>
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          {isMentor && (
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-300">
-                Availability Status
-              </label>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-300">
+              Availability Status
+            </label>
 
-              <select
-                value={
-                  availability.status
-                }
-                onChange={(event) =>
-                  setAvailability(
-                    (current) => ({
-                      ...current,
-                      status:
-                        event.target
-                          .value,
-                    })
-                  )
-                }
-                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-              >
-                <option value="ACTIVE">
-                  Available for session requests
-                </option>
+            <select
+              value={
+                availability.status
+              }
+              onChange={(event) =>
+                setAvailability(
+                  (current) => ({
+                    ...current,
+                    status:
+                      event.target
+                        .value,
+                  })
+                )
+              }
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+            >
+              <option value="ACTIVE">
+                Available
+              </option>
 
-                <option value="INACTIVE">
-                  Not taking requests
-                </option>
-              </select>
-            </div>
-          )}
+              <option value="INACTIVE">
+                Not available
+              </option>
+            </select>
+          </div>
 
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-slate-300">
@@ -1225,9 +1289,7 @@ export function OnboardingPage({
 
         <div>
           <label className="mb-1.5 block text-xs font-semibold text-slate-300">
-            {isMentor
-              ? 'Mentor Introduction'
-              : 'Profile Introduction (Optional)'}
+            Profile Introduction
           </label>
 
           <textarea
@@ -1238,30 +1300,20 @@ export function OnboardingPage({
                 event.target.value
               )
             }
-            placeholder={
-              isMentor
-                ? 'Describe your mentoring approach and topics you enjoy teaching...'
-                : 'Introduce yourself to the LearnX community...'
-            }
+            placeholder="Introduce yourself to the LearnX community..."
             className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200"
           />
         </div>
 
-        <div className="space-y-2 rounded-xl border border-slate-800/80 bg-slate-950/80 p-4 text-xs">
+        <div className="space-y-3 rounded-xl border border-slate-800/80 bg-slate-950/80 p-4 text-xs">
           <div className="font-semibold text-white">
             Summary Review
           </div>
 
           <div className="text-slate-400">
-            {isMentor
-              ? 'Sharing skills'
-              : 'Learning skills'}
-            :{' '}
+            Skills to Learn:{' '}
             <span className="text-cyan-300">
-              {(isMentor
-                ? shareSkills
-                : learnSkills
-              )
+              {learnSkills
                 .map(
                   (skill) =>
                     `${skill.name} (${skill.level})`
@@ -1271,15 +1323,26 @@ export function OnboardingPage({
             </span>
           </div>
 
-          {!isMentor && (
-            <div className="text-slate-400">
-              Goal:{' '}
-              <span className="text-white">
-                {learningGoal ||
-                  'Not set'}
-              </span>
-            </div>
-          )}
+          <div className="text-slate-400">
+            Skills to Share:{' '}
+            <span className="text-emerald-300">
+              {shareSkills
+                .map(
+                  (skill) =>
+                    `${skill.name} (${skill.level})`
+                )
+                .join(', ') ||
+                'None'}
+            </span>
+          </div>
+
+          <div className="text-slate-400">
+            Goal:{' '}
+            <span className="text-white">
+              {learningGoal ||
+                'Not set'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1288,9 +1351,7 @@ export function OnboardingPage({
           type="button"
           onClick={() => {
             setFormError('');
-            setStep(
-              isMentor ? 1 : 2
-            );
+            setStep(2);
           }}
           className="rounded-xl px-4 py-2 text-xs text-slate-400 hover:text-white"
         >
@@ -1305,9 +1366,7 @@ export function OnboardingPage({
         >
           {loading
             ? 'Saving Profile...'
-            : isMentor
-              ? 'Complete Mentor Onboarding'
-              : 'Complete Learner Onboarding'}
+            : 'Complete Onboarding'}
 
           <CheckCircle2 className="h-4 w-4" />
         </button>
@@ -1335,9 +1394,8 @@ export function OnboardingPage({
         </h1>
 
         <p className="mt-1 text-xs text-slate-400">
-          {isMentor
-            ? 'Add the skills, experience, and availability learners will see.'
-            : 'Set your learning goals, interests, and availability.'}
+          You can learn skills, share knowledge,
+          or do both.
         </p>
 
         {formError && (
@@ -1397,7 +1455,7 @@ export function OnboardingPage({
 
             <span>
               {isMentor
-                ? 'Availability'
+                ? 'What to Learn'
                 : 'Skills You Can Share'}
             </span>
           </div>
@@ -1422,42 +1480,33 @@ export function OnboardingPage({
             </span>
 
             <span>
-              {isMentor
-                ? 'Complete'
-                : 'Availability'}
+              Learning & Availability
             </span>
           </div>
         </div>
       </div>
 
-      {/* Learner Step 1 */}
+      {/* =================================================
+          STEP 1
+      ================================================= */}
 
-      {!isMentor &&
-        step === 1 && (
-          <>
-            {renderLearnerSkillsStep()}
-          </>
-        )}
+      {step === 1 &&
+        (isMentor
+          ? renderShareSkillsStep()
+          : renderLearnerSkillsStep())}
 
-      {/* Learner Step 2 */}
+      {/* =================================================
+          STEP 2
+      ================================================= */}
 
-      {!isMentor &&
-        step === 2 && (
-          <>
-            {renderShareSkillsStep()}
-          </>
-        )}
+      {step === 2 &&
+        (isMentor
+          ? renderLearnerSkillsStep()
+          : renderShareSkillsStep())}
 
-      {/* Mentor Step 1 */}
-
-      {isMentor &&
-        step === 1 && (
-          <>
-            {renderShareSkillsStep()}
-          </>
-        )}
-
-      {/* Final Step */}
+      {/* =================================================
+          STEP 3
+      ================================================= */}
 
       {step === 3 &&
         renderFinalStep()}
