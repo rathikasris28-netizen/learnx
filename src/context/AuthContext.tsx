@@ -62,7 +62,10 @@ export function AuthProvider({
     useState<boolean>(true);
 
   /**
-   * Refresh authenticated user
+   * Refresh authenticated user.
+   *
+   * This function ONLY calls /auth/me when
+   * both a valid-looking token and user ID exist.
    */
   const refreshUser = useCallback(async () => {
     const storedId =
@@ -71,12 +74,6 @@ export function AuthProvider({
     const storedToken =
       localStorage.getItem('learnx_token');
 
-    /*
-     * IMPORTANT:
-     * Public pages such as Register and Login
-     * must NOT call /auth/me when there is
-     * no authenticated session.
-     */
     if (
       !storedId ||
       !storedToken ||
@@ -116,28 +113,42 @@ export function AuthProvider({
   }, []);
 
   /**
-   * Initial authentication check
+   * Authentication initialization.
    *
-   * Only call /auth/me when a token exists.
+   * Public pages must never require authentication.
    */
   useEffect(() => {
+    const storedId =
+      localStorage.getItem('learnx_user_id');
+
     const storedToken =
       localStorage.getItem('learnx_token');
 
-    if (
-      storedToken &&
-      !storedToken.startsWith('local_session_')
-    ) {
+    const hasAuthenticatedSession =
+      Boolean(
+        storedId &&
+        storedToken &&
+        !storedToken.startsWith('local_session_')
+      );
+
+    if (hasAuthenticatedSession) {
       refreshUser();
     } else {
       setUser(null);
       setToken(null);
       setLoading(false);
     }
+  }, [refreshUser]);
 
-    /*
-     * Real-time server events
-     */
+  /**
+   * Start real-time synchronization ONLY
+   * after an authenticated user exists.
+   */
+  useEffect(() => {
+    if (!user || !token) {
+      return;
+    }
+
     const eventSource = new EventSource(
       '/api/events'
     );
@@ -170,8 +181,8 @@ export function AuthProvider({
       }
     );
 
-    /*
-     * Polling backup
+    /**
+     * Polling backup.
      */
     const interval = setInterval(() => {
       const currentUserId =
@@ -201,7 +212,7 @@ export function AuthProvider({
       eventSource.close();
       clearInterval(interval);
     };
-  }, [refreshUser]);
+  }, [user, token, refreshUser]);
 
   /**
    * Login
@@ -214,10 +225,10 @@ export function AuthProvider({
       '/auth/login',
       {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           email,
           password,
-        }),
+        },
       }
     );
 
@@ -302,8 +313,8 @@ export function AuthProvider({
       setUser(data.user);
     } else {
       /*
-       * Registration succeeded but no
-       * authenticated session was returned.
+       * Registration succeeded but
+       * no authenticated session was returned.
        */
       localStorage.removeItem(
         'learnx_user_id'
@@ -341,10 +352,10 @@ export function AuthProvider({
       '/auth/verify-email',
       {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           user_id: userId,
           email,
-        }),
+        },
       }
     );
 
