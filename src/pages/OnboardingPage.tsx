@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -144,9 +145,20 @@ export function OnboardingPage({
 
         if (!mounted) return;
 
-        const skills = Array.isArray(response?.skills)
-          ? response.skills
-          : [];
+        /*
+         * Backend /skills returns the skills array
+         * directly.
+         *
+         * Support both:
+         *   GET /skills -> [...]
+         * and, for compatibility:
+         *   GET /skills -> { skills: [...] }
+         */
+        const skills = Array.isArray(response)
+          ? response
+          : Array.isArray(response?.skills)
+            ? response.skills
+            : [];
 
         setSkillsCatalog(skills);
       } catch (error) {
@@ -431,12 +443,6 @@ export function OnboardingPage({
       return 'Please enter your learning goal.';
     }
 
-    const shareError = validateShareSkills();
-
-    if (shareError) {
-      return shareError;
-    }
-
     if (
       availability.available_from >=
       availability.available_until
@@ -470,9 +476,13 @@ export function OnboardingPage({
     try {
       const payload = {
         /*
-         * IMPORTANT:
-         * Both roles can LEARN and SHARE.
-         * Registration role does not remove either capability.
+         * Both Learners and Knowledge Sharers can:
+         * - learn skills
+         * - share knowledge
+         *
+         * Registration role identifies the starting
+         * role only. It does not permanently prevent
+         * the other capability.
          */
         learn_skills: learnSkills,
 
@@ -802,8 +812,7 @@ export function OnboardingPage({
               {aiSuggested
                 .filter(
                   (item) =>
-                    item.type ===
-                    'SHARE'
+                    item.type === 'SHARE'
                 )
                 .map((item) => (
                   <div
@@ -1063,7 +1072,6 @@ export function OnboardingPage({
         <div>
           <h2 className="flex items-center gap-2 text-base font-bold text-white">
             <Clock className="h-4 w-4 text-cyan-400" />
-
             Learning, Availability & Profile
           </h2>
 
@@ -1077,6 +1085,14 @@ export function OnboardingPage({
             Mentors start with 0 Time Credits.
             Credits are earned only through
             verified knowledge-sharing sessions.
+          </div>
+        )}
+
+        {!isMentor && (
+          <div className="rounded-lg border border-cyan-800/50 bg-cyan-950/20 p-3 text-xs text-cyan-200">
+            Learners receive 5 Time Credits as a
+            welcome bonus. You can also share knowledge
+            later to earn additional Time Credits.
           </div>
         )}
 
@@ -1407,8 +1423,6 @@ export function OnboardingPage({
           </p>
         )}
 
-        {/* Progress */}
-
         <div className="mt-8 flex items-center justify-center gap-3">
           <div
             className={`flex items-center gap-2 text-xs font-semibold ${
@@ -1486,27 +1500,15 @@ export function OnboardingPage({
         </div>
       </div>
 
-      {/* =================================================
-          STEP 1
-      ================================================= */}
-
       {step === 1 &&
         (isMentor
           ? renderShareSkillsStep()
           : renderLearnerSkillsStep())}
 
-      {/* =================================================
-          STEP 2
-      ================================================= */}
-
       {step === 2 &&
         (isMentor
           ? renderLearnerSkillsStep()
           : renderShareSkillsStep())}
-
-      {/* =================================================
-          STEP 3
-      ================================================= */}
 
       {step === 3 &&
         renderFinalStep()}

@@ -1,36 +1,45 @@
+
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { 
-  Search, 
-  Sparkles, 
-  Filter, 
-  Calendar, 
-  Clock, 
-  ShieldCheck, 
-  Star, 
-  User, 
-  ArrowRight, 
-  X, 
+import {
+  Search,
+  Sparkles,
+  Clock,
+  Star,
+  User,
+  ArrowRight,
+  X,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
 } from 'lucide-react';
 import { apiRequest } from '../lib/api';
 import { Skill, MatchCandidate } from '../types';
 
-export function DiscoverPage({ navigate }: { navigate: (path: string) => void }) {
+export function DiscoverPage({
+  navigate,
+}: {
+  navigate: (path: string) => void;
+}) {
   const { user } = useAuth();
+
   const [skills, setSkills] = useState<Skill[]>([]);
   const [category, setCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [nlQuery, setNlQuery] = useState('');
   const [nlLoading, setNlLoading] = useState(false);
+
   const [candidates, setCandidates] = useState<MatchCandidate[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
 
   // Booking Modal State
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
-  const [selectedCandidate, setSelectedCandidate] = useState<MatchCandidate | null>(null);
-  const [bookingDate, setBookingDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedCandidate, setSelectedCandidate] =
+    useState<MatchCandidate | null>(null);
+
+  const [bookingDate, setBookingDate] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+
   const [bookingTime, setBookingTime] = useState('18:00:00');
   const [learningGoal, setLearningGoal] = useState('');
   const [bookingLoading, setBookingLoading] = useState(false);
@@ -39,33 +48,99 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
 
   // Fetch Skills Catalog
   useEffect(() => {
-    let url = `/skills?category=${category}`;
-    if (searchQuery) url += `&search=${encodeURIComponent(searchQuery)}`;
-    apiRequest(url).then((res) => {
-      setSkills(res.skills || []);
-    }).catch(() => {});
+    let cancelled = false;
+
+    const fetchSkills = async () => {
+      try {
+        let url = `/skills?category=${encodeURIComponent(category)}`;
+
+        if (searchQuery.trim()) {
+          url += `&search=${encodeURIComponent(searchQuery.trim())}`;
+        }
+
+        const response = await apiRequest<Skill[] | { skills?: Skill[] }>(
+          url
+        );
+
+        const skillList = Array.isArray(response)
+          ? response
+          : Array.isArray(response?.skills)
+            ? response.skills
+            : [];
+
+        if (!cancelled) {
+          setSkills(skillList);
+        }
+      } catch {
+        if (!cancelled) {
+          setSkills([]);
+        }
+      }
+    };
+
+    fetchSkills();
+
+    return () => {
+      cancelled = true;
+    };
   }, [category, searchQuery]);
 
   // Fetch initial candidates
   useEffect(() => {
-    setLoadingCandidates(true);
-    apiRequest('/matching').then((res) => {
-      setCandidates(res.matches || []);
-    }).catch(() => {}).finally(() => setLoadingCandidates(false));
+    let cancelled = false;
+
+    const fetchCandidates = async () => {
+      setLoadingCandidates(true);
+
+      try {
+        const response = await apiRequest<{
+          matches?: MatchCandidate[];
+        }>('/matching');
+
+        if (!cancelled) {
+          setCandidates(
+            Array.isArray(response?.matches) ? response.matches : []
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setCandidates([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingCandidates(false);
+        }
+      }
+    };
+
+    fetchCandidates();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Handle Natural Language AI Search
   const handleNlSearch = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!nlQuery.trim()) return;
 
     setNlLoading(true);
+
     try {
-      const data = await apiRequest('/search/nl', {
+      const data = await apiRequest<{
+        results?: MatchCandidate[];
+      }>('/search/nl', {
         method: 'POST',
-        body: JSON.stringify({ query: nlQuery })
+        body: {
+          query: nlQuery.trim(),
+        },
       });
-      setCandidates(data.results || []);
+
+      setCandidates(
+        Array.isArray(data?.results) ? data.results : []
+      );
     } catch (err: any) {
       alert(err.message || 'AI search failed');
     } finally {
@@ -73,52 +148,129 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
     }
   };
 
+  const handleSkillSelect = async (skillId: string, skillName: string) => {
+    setSearchQuery(skillName);
+    setLoadingCandidates(true);
+
+    try {
+      const response = await apiRequest<{
+        matches?: MatchCandidate[];
+      }>(`/matching?skill_id=${encodeURIComponent(skillId)}`);
+
+      setCandidates(
+        Array.isArray(response?.matches) ? response.matches : []
+      );
+    } catch {
+      setCandidates([]);
+    } finally {
+      setLoadingCandidates(false);
+    }
+  };
+
   const openBookingModal = (candidate: MatchCandidate) => {
     setSelectedCandidate(candidate);
-    setBookingTime(candidate.available_from || '18:00:00');
-    setLearningGoal(`Learn ${candidate.skill_name} fundamentals and solve practical exercises.`);
+
+    setBookingTime(
+      candidate.available_from || '18:00:00'
+    );
+
+    setLearningGoal(
+      `Learn ${candidate.skill_name} fundamentals and solve practical exercises.`
+    );
+
     setBookingSuccess('');
     setBookingError('');
     setBookingModalOpen(true);
   };
 
-  const handleSendBookingRequest = async (e: React.FormEvent) => {
+  const calculateEndTime = (startTime: string): string => {
+    const [hours, minutes] = startTime
+      .split(':')
+      .map(Number);
+
+    const startMinutes =
+      (Number.isFinite(hours) ? hours : 0) * 60 +
+      (Number.isFinite(minutes) ? minutes : 0);
+
+    const endMinutes = (startMinutes + 60) % (24 * 60);
+
+    const endHours = Math.floor(endMinutes / 60);
+    const endMins = endMinutes % 60;
+
+    return `${String(endHours).padStart(2, '0')}:${String(
+      endMins
+    ).padStart(2, '0')}:00`;
+  };
+
+  const handleSendBookingRequest = async (
+    e: React.FormEvent
+  ) => {
     e.preventDefault();
+
     if (!user) {
       navigate('/login');
       return;
     }
+
     if (!selectedCandidate) return;
+
+    if (!selectedCandidate.user_id) {
+      setBookingError(
+        'This knowledge sharer is not available for session requests.'
+      );
+      return;
+    }
+
+    if (!selectedCandidate.skill_id) {
+      setBookingError(
+        'The selected skill is not available for this session request.'
+      );
+      return;
+    }
+
+    if (!learningGoal.trim()) {
+      setBookingError(
+        'Please enter your learning goal.'
+      );
+      return;
+    }
 
     setBookingLoading(true);
     setBookingError('');
     setBookingSuccess('');
 
     try {
-      // Calculate 1 hour duration
-      const [h, m] = bookingTime.split(':');
-      const endHour = (parseInt(h, 10) + 1).toString().padStart(2, '0');
-      const endTime = `${endHour}:${m}:00`;
+      const endTime = calculateEndTime(bookingTime);
 
-      const res = await apiRequest('/sessions/request', {
+      const response = await apiRequest<{
+        message?: string;
+      }>('/sessions/request', {
         method: 'POST',
-        body: JSON.stringify({
-          knowledge_sharer_id: selectedCandidate.user_id,
+        body: {
+          knowledge_sharer_id:
+            selectedCandidate.user_id,
           skill_id: selectedCandidate.skill_id,
           session_date: bookingDate,
           start_time: bookingTime,
           end_time: endTime,
-          learning_goal: learningGoal
-        })
+          learning_goal: learningGoal.trim(),
+        },
       });
 
-      setBookingSuccess(res.message || 'Session request sent successfully!');
+      setBookingSuccess(
+        response.message ||
+          'Session request sent successfully!'
+      );
+
       setTimeout(() => {
         setBookingModalOpen(false);
         navigate('/sessions');
       }, 1500);
     } catch (err: any) {
-      setBookingError(err.message || 'Failed to send session request.');
+      setBookingError(
+        err.message ||
+          'Failed to send session request.'
+      );
     } finally {
       setBookingLoading(false);
     }
@@ -131,8 +283,10 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
         <h1 className="text-2xl sm:text-3xl font-bold text-white font-['Space_Grotesk']">
           Discover Skills & AI Peer Matching
         </h1>
+
         <p className="text-xs text-slate-400 mt-1">
-          Search the catalog or type in natural language to find verified knowledge sharers.
+          Search the catalog or type in natural language
+          to find verified knowledge sharers.
         </p>
       </div>
 
@@ -142,24 +296,37 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
           <Sparkles className="h-4 w-4 text-cyan-400" />
           <span>Natural Language AI Search</span>
         </div>
-        <form onSubmit={handleNlSearch} className="flex flex-col sm:flex-row gap-3">
+
+        <form
+          onSubmit={handleNlSearch}
+          className="flex flex-col sm:flex-row gap-3"
+        >
           <div className="relative flex-1">
             <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+
             <input
               type="text"
               value={nlQuery}
-              onChange={(e) => setNlQuery(e.target.value)}
+              onChange={(e) =>
+                setNlQuery(e.target.value)
+              }
               placeholder="e.g. 'I want to learn Python from a beginner-friendly trainer' or 'Find an English trainer available at 6 PM'"
               className="w-full pl-10 pr-4 py-3 text-xs rounded-xl border border-slate-700 bg-slate-950 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 shadow-inner"
             />
           </div>
+
           <button
             type="submit"
             disabled={nlLoading}
             className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
           >
             <Sparkles className="h-3.5 w-3.5" />
-            <span>{nlLoading ? 'Parsing with AI...' : 'AI Search'}</span>
+
+            <span>
+              {nlLoading
+                ? 'Parsing with AI...'
+                : 'AI Search'}
+            </span>
           </button>
         </form>
       </div>
@@ -168,7 +335,9 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
         {/* Category Tabs */}
         <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900/60 border border-slate-800">
-          {(['All', 'Technical', 'Non-Technical'] as const).map((cat) => (
+          {(
+            ['All', 'Technical', 'Non-Technical'] as const
+          ).map((cat) => (
             <button
               key={cat}
               onClick={() => setCategory(cat)}
@@ -186,10 +355,13 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
         {/* Text Filter */}
         <div className="relative w-full sm:w-64">
           <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-500" />
+
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) =>
+              setSearchQuery(e.target.value)
+            }
             placeholder="Filter catalog..."
             className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
           />
@@ -201,20 +373,30 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
         <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
           Skill Catalog ({skills.length} available)
         </h2>
+
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {skills.map((s) => (
+          {skills.map((skill) => (
             <div
-              key={s.id}
-              onClick={() => {
-                setSearchQuery(s.name);
-                apiRequest(`/matching?skill_id=${s.id}`).then(res => setCandidates(res.matches || []));
-              }}
+              key={skill.id}
+              onClick={() =>
+                handleSkillSelect(
+                  skill.id,
+                  skill.name
+                )
+              }
               className="p-3 rounded-xl border border-slate-800 bg-slate-900/40 hover:border-cyan-500/40 cursor-pointer transition-all hover:bg-slate-900/80 group"
             >
-              <div className="text-[10px] text-slate-500 font-semibold uppercase">{s.category}</div>
-              <div className="text-xs font-bold text-white group-hover:text-cyan-300 mt-1">{s.name}</div>
+              <div className="text-[10px] text-slate-500 font-semibold uppercase">
+                {skill.category}
+              </div>
+
+              <div className="text-xs font-bold text-white group-hover:text-cyan-300 mt-1">
+                {skill.name}
+              </div>
+
               <div className="text-[10px] text-slate-400 mt-1">
-                {s.sharers_count ?? 0} active sharers
+                {skill.sharers_count ?? 0} active
+                sharers
               </div>
             </div>
           ))}
@@ -229,10 +411,13 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
               <Sparkles className="h-4 w-4 text-cyan-400" />
               Verified Knowledge Sharers
             </h2>
+
             <p className="text-xs text-slate-400 mt-0.5">
-              Matched from real platform availability, skill overlap, and reliability scores.
+              Matched from real platform availability,
+              skill overlap, and reliability scores.
             </p>
           </div>
+
           <span className="text-xs text-slate-400 font-medium">
             {candidates.length} sharers found
           </span>
@@ -240,23 +425,28 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
 
         {loadingCandidates ? (
           <div className="py-12 text-center text-xs text-slate-500">
-            Querying real database and calculating AI matching scores...
+            Querying real database and calculating AI
+            matching scores...
           </div>
         ) : candidates.length === 0 ? (
           <div className="py-12 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 p-6 space-y-2">
             <User className="h-8 w-8 text-slate-600 mx-auto" />
+
             <p className="text-xs text-slate-400 font-medium">
-              No knowledge sharers currently match the selected criteria.
+              No knowledge sharers currently match the
+              selected criteria.
             </p>
+
             <p className="text-[11px] text-slate-500">
-              Try adjusting your search query or exploring other skills in the catalog.
+              Try adjusting your search query or
+              exploring other skills in the catalog.
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {candidates.map((c, idx) => (
+            {candidates.map((candidate, index) => (
               <div
-                key={`${c.user_id}-${c.skill_id || ''}-${idx}`}
+                key={`${candidate.user_id}-${candidate.skill_id || ''}-${index}`}
                 className="p-5 rounded-2xl border border-slate-800 bg-slate-900/50 hover:border-slate-700 transition-all flex flex-col justify-between space-y-4 shadow-sm"
               >
                 <div className="space-y-3">
@@ -264,40 +454,69 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-xs text-white uppercase">
-                        {c.full_name?.slice(0, 2) || 'LX'}
+                        {candidate.full_name?.slice(0, 2) ||
+                          'LX'}
                       </div>
+
                       <div>
-                        <h3 className="text-xs font-bold text-white">{c.full_name}</h3>
+                        <h3 className="text-xs font-bold text-white">
+                          {candidate.full_name}
+                        </h3>
+
                         <p className="text-[10px] text-slate-400">
-                          {c.city ? `${c.city}, ` : ''}{c.preferred_language}
+                          {candidate.city
+                            ? `${candidate.city}, `
+                            : ''}
+                          {candidate.preferred_language}
                         </p>
                       </div>
                     </div>
+
                     <div className="flex flex-col items-end">
                       <span className="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/60 text-cyan-300 font-bold text-xs">
-                        {c.match_percentage}% Match
+                        {candidate.match_percentage}%
+                        Match
                       </span>
-                      <span className="text-[9px] text-slate-400 mt-0.5">Trust: {c.trust_score}%</span>
+
+                      <span className="text-[9px] text-slate-400 mt-0.5">
+                        Trust: {candidate.trust_score}%
+                      </span>
                     </div>
                   </div>
 
                   {/* Skill Badge & Availability */}
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-white font-semibold text-[11px]">
-                      {c.skill_name} · {c.skill_level}
+                      {candidate.skill_name} ·{' '}
+                      {candidate.skill_level}
                     </span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                      c.availability_status === 'ACTIVE'
-                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/40'
-                        : 'bg-slate-800 text-slate-400'
-                    }`}>
-                      {c.availability_status} ({c.available_from?.slice(0, 5)} - {c.available_until?.slice(0, 5)})
+
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                        candidate.availability_status ===
+                        'ACTIVE'
+                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/40'
+                          : 'bg-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {candidate.availability_status}{' '}
+                      (
+                      {candidate.available_from?.slice(
+                        0,
+                        5
+                      )}{' '}
+                      -{' '}
+                      {candidate.available_until?.slice(
+                        0,
+                        5
+                      )}
+                      )
                     </span>
                   </div>
 
                   {/* Why Recommended Explanation */}
                   <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
-                    {c.why_recommended}
+                    {candidate.why_recommended}
                   </p>
                 </div>
 
@@ -305,11 +524,22 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
                 <div className="pt-2 flex items-center justify-between border-t border-slate-800/80 text-xs">
                   <div className="flex items-center gap-1 text-amber-400 font-semibold text-[11px]">
                     <Star className="h-3 w-3 fill-current" />
-                    <span>{Number(c.rating_avg).toFixed(1)}</span>
-                    <span className="text-slate-500 font-normal">({c.rating_count} reviews)</span>
+
+                    <span>
+                      {Number(
+                        candidate.rating_avg
+                      ).toFixed(1)}
+                    </span>
+
+                    <span className="text-slate-500 font-normal">
+                      ({candidate.rating_count} reviews)
+                    </span>
                   </div>
+
                   <button
-                    onClick={() => openBookingModal(c)}
+                    onClick={() =>
+                      openBookingModal(candidate)
+                    }
                     className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-sm hover:from-cyan-400 hover:to-blue-500 transition-all flex items-center gap-1.5"
                   >
                     <span>Request Session</span>
@@ -329,14 +559,20 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
                 <h3 className="text-sm font-bold text-white font-['Space_Grotesk']">
-                  Schedule Session with {selectedCandidate.full_name}
+                  Schedule Session with{' '}
+                  {selectedCandidate.full_name}
                 </h3>
+
                 <p className="text-[11px] text-slate-400">
-                  Topic: {selectedCandidate.skill_name} ({selectedCandidate.skill_level})
+                  Topic: {selectedCandidate.skill_name}{' '}
+                  ({selectedCandidate.skill_level})
                 </p>
               </div>
+
               <button
-                onClick={() => setBookingModalOpen(false)}
+                onClick={() =>
+                  setBookingModalOpen(false)
+                }
                 className="p-1 rounded-lg text-slate-400 hover:text-white"
               >
                 <X className="h-4 w-4" />
@@ -353,36 +589,60 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
             {bookingSuccess ? (
               <div className="py-6 text-center space-y-2">
                 <CheckCircle2 className="h-10 w-10 text-emerald-400 mx-auto" />
-                <h4 className="text-sm font-bold text-white">Session Requested!</h4>
+
+                <h4 className="text-sm font-bold text-white">
+                  Session Requested!
+                </h4>
+
                 <p className="text-xs text-slate-300">
                   {bookingSuccess}
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleSendBookingRequest} className="space-y-4">
+              <form
+                onSubmit={handleSendBookingRequest}
+                className="space-y-4"
+              >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                       Session Date *
                     </label>
+
                     <input
                       type="date"
                       value={bookingDate}
-                      onChange={(e) => setBookingDate(e.target.value)}
+                      onChange={(e) =>
+                        setBookingDate(e.target.value)
+                      }
                       required
-                      min={new Date().toISOString().split('T')[0]}
+                      min={
+                        new Date()
+                          .toISOString()
+                          .split('T')[0]
+                      }
                       className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 focus:outline-none focus:border-cyan-500"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                      Start Time (Sharer Active from {selectedCandidate.available_from?.slice(0, 5)}) *
+                      Start Time (Sharer Active from{' '}
+                      {selectedCandidate.available_from?.slice(
+                        0,
+                        5
+                      )}
+                      ) *
                     </label>
+
                     <input
                       type="time"
                       value={bookingTime.slice(0, 5)}
-                      onChange={(e) => setBookingTime(e.target.value + ':00')}
+                      onChange={(e) =>
+                        setBookingTime(
+                          `${e.target.value}:00`
+                        )
+                      }
                       required
                       className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 focus:outline-none focus:border-cyan-500"
                     />
@@ -391,12 +651,16 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    What is your specific learning goal for this session? *
+                    What is your specific learning goal
+                    for this session? *
                   </label>
+
                   <textarea
                     rows={3}
                     value={learningGoal}
-                    onChange={(e) => setLearningGoal(e.target.value)}
+                    onChange={(e) =>
+                      setLearningGoal(e.target.value)
+                    }
                     required
                     placeholder="e.g. Master loops and list comprehensions with practical exercises..."
                     className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
@@ -406,25 +670,39 @@ export function DiscoverPage({ navigate }: { navigate: (path: string) => void })
                 <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-400 space-y-1">
                   <div className="flex items-center gap-1.5 text-cyan-300 font-semibold">
                     <Clock className="h-3.5 w-3.5" />
-                    <span>LearnX private video room · verified session time</span>
+
+                    <span>
+                      LearnX private video room · verified
+                      session time
+                    </span>
                   </div>
-                  <p>Both participants confirm completion. Any Time Credits are calculated from verified sharing time.</p>
+
+                  <p>
+                    Both participants confirm completion.
+                    Any Time Credits are calculated from
+                    verified sharing time.
+                  </p>
                 </div>
 
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={() => setBookingModalOpen(false)}
+                    onClick={() =>
+                      setBookingModalOpen(false)
+                    }
                     className="px-4 py-2 text-xs text-slate-400 hover:text-white"
                   >
                     Cancel
                   </button>
+
                   <button
                     type="submit"
                     disabled={bookingLoading}
                     className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 transition-all"
                   >
-                    {bookingLoading ? 'Submitting...' : 'Send Session Request'}
+                    {bookingLoading
+                      ? 'Submitting...'
+                      : 'Send Session Request'}
                   </button>
                 </div>
               </form>

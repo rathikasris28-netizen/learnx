@@ -1,3 +1,4 @@
+
 import React, {
   createContext,
   useContext,
@@ -37,7 +38,8 @@ interface AuthContextType {
 
   verifyEmail: (
     userId?: string,
-    email?: string
+    email?: string,
+    token?: string
   ) => Promise<void>;
 }
 
@@ -62,23 +64,16 @@ export function AuthProvider({
     useState<boolean>(true);
 
   /**
-   * Refresh authenticated user.
+   * Refresh the currently authenticated LearnX user.
    *
-   * This function ONLY calls /auth/me when
-   * both a valid-looking token and user ID exist.
+   * The backend validates the Supabase access token
+   * through /auth/me.
    */
   const refreshUser = useCallback(async () => {
-    const storedId =
-      localStorage.getItem('learnx_user_id');
-
     const storedToken =
       localStorage.getItem('learnx_token');
 
-    if (
-      !storedId ||
-      !storedToken ||
-      storedToken.startsWith('local_session_')
-    ) {
+    if (!storedToken) {
       setUser(null);
       setToken(null);
       setLoading(false);
@@ -88,14 +83,14 @@ export function AuthProvider({
     try {
       const data = await apiRequest('/auth/me');
 
-      if (data?.user) {
-        setUser(data.user);
-        setToken(storedToken);
-      } else {
+      if (!data?.user) {
         throw new Error(
-          'Invalid authentication response'
+          'Invalid authentication response.'
         );
       }
+
+      setUser(data.user);
+      setToken(storedToken);
     } catch {
       localStorage.removeItem(
         'learnx_user_id'
@@ -115,24 +110,18 @@ export function AuthProvider({
   /**
    * Authentication initialization.
    *
-   * Public pages must never require authentication.
+   * If a real Supabase access token exists,
+   * validate it through the backend.
+   *
+   * Otherwise, the application starts as
+   * an unauthenticated user.
    */
   useEffect(() => {
-    const storedId =
-      localStorage.getItem('learnx_user_id');
-
     const storedToken =
       localStorage.getItem('learnx_token');
 
-    const hasAuthenticatedSession =
-      Boolean(
-        storedId &&
-        storedToken &&
-        !storedToken.startsWith('local_session_')
-      );
-
-    if (hasAuthenticatedSession) {
-      refreshUser();
+    if (storedToken) {
+      void refreshUser();
     } else {
       setUser(null);
       setToken(null);
@@ -141,8 +130,12 @@ export function AuthProvider({
   }, [refreshUser]);
 
   /**
-   * Start real-time synchronization ONLY
-   * after an authenticated user exists.
+   * Real-time synchronization.
+   *
+   * Refresh authenticated user information when
+   * LearnX session-related events are received.
+   *
+   * A polling backup is also maintained.
    */
   useEffect(() => {
     if (!user || !token) {
@@ -156,55 +149,41 @@ export function AuthProvider({
     eventSource.addEventListener(
       'session_created',
       () => {
-        refreshUser();
+        void refreshUser();
       }
     );
 
     eventSource.addEventListener(
       'session_updated',
       () => {
-        refreshUser();
+        void refreshUser();
       }
     );
 
     eventSource.addEventListener(
       'session_completed',
       () => {
-        refreshUser();
+        void refreshUser();
       }
     );
 
     eventSource.addEventListener(
       'availability_updated',
       () => {
-        refreshUser();
+        void refreshUser();
       }
     );
 
-    /**
-     * Polling backup.
-     */
     const interval = setInterval(() => {
-      const currentUserId =
-        localStorage.getItem(
-          'learnx_user_id'
-        );
-
       const currentToken =
         localStorage.getItem(
           'learnx_token'
         );
 
-      if (
-        currentUserId &&
-        currentToken &&
-        !currentToken.startsWith(
-          'local_session_'
-        )
-      ) {
-        apiRequest('/sync/events').catch(
-          () => {}
-        );
+      if (currentToken) {
+        void apiRequest(
+          '/sync/events'
+        ).catch(() => {});
       }
     }, 15000);
 
@@ -215,7 +194,16 @@ export function AuthProvider({
   }, [user, token, refreshUser]);
 
   /**
-   * Login
+   * Login.
+   *
+   * Backend:
+   *   POST /auth/login
+   *
+   * Supabase:
+   *   Authenticates the user's email/password.
+   *
+   * Email verification remains controlled by
+   * the backend/Supabase authentication flow.
    */
   const login = async (
     email: string,
@@ -232,138 +220,202 @@ export function AuthProvider({
       }
     );
 
+    const accessToken =
+      data?.session?.access_token;
+
     if (
-      data?.user &&
-      typeof data.token === 'string' &&
-      data.token.length > 0 &&
-      !data.token.startsWith(
-        'local_session_'
-      )
+      !data?.user ||
+      typeof accessToken !== 'string' ||
+      accessToken.length === 0
     ) {
-      const userId =
-        data.user.id ||
-        data.user.user_id;
-
-      localStorage.setItem(
-        'learnx_user_id',
-        userId
-      );
-
-      localStorage.setItem(
-        'learnx_token',
-        data.token
-      );
-
-      setToken(data.token);
-      setUser(data.user);
-    } else {
       throw new Error(
         'Authentication service did not return a valid access token.'
       );
     }
+
+    const userId =
+      data.user.id ||
+      data.user.user_id;
+
+    if (!userId) {
+      throw new Error(
+        'Authentication service did not return a valid user ID.'
+      );
+    }
+
+    /**
+     * Store the real Supabase access token.
+     */
+    localStorage.setItem(
+      'learnx_user_id',
+      userId
+    );
+
+    localStorage.setItem(
+      'learnx_token',
+      accessToken
+    );
+
+    setToken(accessToken);
+    setUser(data.user);
+    setLoading(false);
   };
 
   /**
-   * Registration
+   * Registration.
+   *
+   * Frontend roles:
+   *   LEARNER
+   *   MENTOR
+   *
+   * Backend roles:
+   *   LEARNER
+   *   KNOWLEDGE_SHARER
+   *
+   * MENTOR is therefore converted to
+   * KNOWLEDGE_SHARER before being sent.
    */
   const register = async (
     formData: any,
     role: 'LEARNER' | 'MENTOR'
   ) => {
+    const backendRole =
+      role === 'MENTOR'
+        ? 'KNOWLEDGE_SHARER'
+        : 'LEARNER';
+
     const data = await apiRequest(
       '/auth/register',
       {
         method: 'POST',
         body: {
           ...formData,
-          role,
+          role: backendRole,
         },
       }
     );
 
-    if (!data?.user) {
+    if (!data?.user?.id) {
       throw new Error(
-        'Registration succeeded without returning the created account profile.'
+        'Registration succeeded without returning the created account.'
       );
     }
 
-    const authenticated =
-      typeof data.token === 'string' &&
-      data.token.length > 0 &&
-      !data.token.startsWith(
-        'local_session_'
-      );
+    /**
+     * Registration does NOT create a frontend
+     * authentication session.
+     *
+     * Email verification is required first.
+     */
+    localStorage.removeItem(
+      'learnx_user_id'
+    );
 
-    if (authenticated) {
-      const userId =
-        data.user.id ||
-        data.user.user_id;
+    localStorage.removeItem(
+      'learnx_token'
+    );
 
-      localStorage.setItem(
-        'learnx_user_id',
-        userId
-      );
+    setToken(null);
+    setUser(null);
 
-      localStorage.setItem(
-        'learnx_token',
-        data.token
-      );
+    const registeredRole =
+      data?.profile?.role ??
+      backendRole;
 
-      setToken(data.token);
-      setUser(data.user);
-    } else {
-      /*
-       * Registration succeeded but
-       * no authenticated session was returned.
-       */
-      localStorage.removeItem(
-        'learnx_user_id'
-      );
+    /**
+     * LearnX welcome credit rule:
+     *
+     * LEARNER
+     *   -> +5 Time Credits
+     *
+     * KNOWLEDGE_SHARER
+     *   -> 0 Time Credits
+     */
+    const welcomeBonus =
+      registeredRole === 'LEARNER'
+        ? 5
+        : 0;
 
-      localStorage.removeItem(
-        'learnx_token'
-      );
-
-      setToken(null);
-      setUser(null);
-    }
+    const balance =
+      typeof data?.balance === 'number'
+        ? data.balance
+        : welcomeBonus;
 
     return {
-      user_id: data.user_id,
+      user_id: data.user.id,
+
       email_confirmed:
-        data.email_confirmed,
-      role: data.role,
+        data?.profile?.is_email_verified ??
+        false,
+
+      role: registeredRole,
+
       welcome_bonus:
-        data.welcome_bonus || 0,
-      balance:
-        data.user.wallet_balance ?? 0,
-      authenticated,
+        welcomeBonus,
+
+      balance,
+
+      authenticated: false,
     };
   };
 
   /**
-   * Verify email
+   * Verify email.
+   *
+   * The verification token is sent to the
+   * backend, which completes the Supabase
+   * email-verification process.
+   *
+   * userId and email remain in the signature
+   * for compatibility with existing callers.
    */
   const verifyEmail = async (
     userId?: string,
-    email?: string
+    email?: string,
+    token?: string
   ): Promise<void> => {
+    void userId;
+    void email;
+
+    if (!token) {
+      throw new Error(
+        'Email verification token is required.'
+      );
+    }
+
     await apiRequest(
       '/auth/verify-email',
       {
         method: 'POST',
         body: {
-          user_id: userId,
-          email,
+          token,
         },
       }
     );
 
-    await refreshUser();
+    /**
+     * Do not call refreshUser() here.
+     *
+     * Email verification does not automatically
+     * create an authenticated access-token session.
+     *
+     * The user should log in normally after
+     * verification.
+     */
+    setUser(null);
+    setToken(null);
+
+    localStorage.removeItem(
+      'learnx_user_id'
+    );
+
+    localStorage.removeItem(
+      'learnx_token'
+    );
   };
 
   /**
-   * Logout
+   * Logout.
    */
   const logout = (): void => {
     localStorage.removeItem(
@@ -376,6 +428,7 @@ export function AuthProvider({
 
     setUser(null);
     setToken(null);
+    setLoading(false);
   };
 
   return (

@@ -1,57 +1,175 @@
-import { db } from './db.ts';
 
-// Safe AI caller with graceful diagnostic fallback
-export async function parseNaturalLanguageSearch(query: string): Promise<{
+import { db } from "./db.ts";
+import { Prisma } from "@prisma/client";
+
+/**
+ * ============================================================
+ * LearnX AI utilities
+ * ============================================================
+ *
+ * Database:
+ *   Supabase PostgreSQL
+ *
+ * ORM:
+ *   Prisma
+ *
+ * Important:
+ *   - No SQLite
+ *   - No local database
+ *   - No demo users
+ *   - No demo sessions
+ *   - No fake credits
+ *   - No automatic test data
+ *
+ * Supabase Authentication remains responsible for:
+ *   - email
+ *   - password
+ *   - email verification
+ *   - authentication sessions
+ *
+ * Current application data:
+ *   - Supabase Auth user metadata
+ *   - skills
+ *   - user_skills
+ *   - learning requests
+ *   - availability
+ *   - matches
+ *   - sessions
+ *   - Time Credits
+ *   - reviews
+ *   - reliability
+ *   - notifications
+ *   - learning progress
+ *   - quizzes
+ *   - achievements
+ *   - certificates
+ *   - partners
+ *   - reports
+ *   - admin data
+ */
+
+/**
+ * ============================================================
+ * NATURAL LANGUAGE SEARCH
+ * ============================================================
+ */
+
+export interface NaturalLanguageSearchResult {
   skill_name?: string;
   level?: string;
   language?: string;
   preferred_time?: string;
   goal?: string;
-}> {
+}
+
+export async function parseNaturalLanguageSearch(
+  query: string,
+): Promise<NaturalLanguageSearchResult> {
   const qLower = query.toLowerCase();
 
-  // Extract skills from registered catalog
-  const skills = db.prepare('SELECT name FROM skills WHERE is_active = 1').all() as { name: string }[];
+  /**
+   * Read the real skill catalog from Supabase PostgreSQL.
+   */
+  const skills = await db.skill.findMany({
+    where: {
+      isActive: true,
+    },
+    select: {
+      name: true,
+    },
+    orderBy: {
+      name: "asc",
+    },
+  });
+
   let matchedSkill: string | undefined;
-  for (const s of skills) {
-    if (qLower.includes(s.name.toLowerCase())) {
-      matchedSkill = s.name;
+
+  for (const skill of skills) {
+    if (qLower.includes(skill.name.toLowerCase())) {
+      matchedSkill = skill.name;
       break;
     }
   }
 
-  // Extract level
+  /**
+   * Level extraction.
+   */
   let level: string | undefined;
-  if (qLower.includes('beginner') || qLower.includes('basic') || qLower.includes('starter') || qLower.includes('intro')) {
-    level = 'BEGINNER';
-  } else if (qLower.includes('intermediate') || qLower.includes('medium')) {
-    level = 'INTERMEDIATE';
-  } else if (qLower.includes('advanced') || qLower.includes('expert') || qLower.includes('master')) {
-    level = 'ADVANCED';
-  } else if (qLower.includes('elementary')) {
-    level = 'ELEMENTARY';
+
+  if (
+    qLower.includes("beginner") ||
+    qLower.includes("basic") ||
+    qLower.includes("starter") ||
+    qLower.includes("intro")
+  ) {
+    level = "BEGINNER";
+  } else if (
+    qLower.includes("intermediate") ||
+    qLower.includes("medium")
+  ) {
+    level = "INTERMEDIATE";
+  } else if (
+    qLower.includes("advanced") ||
+    qLower.includes("expert") ||
+    qLower.includes("master")
+  ) {
+    level = "ADVANCED";
+  } else if (qLower.includes("elementary")) {
+    level = "ELEMENTARY";
   }
 
-  // Extract language
+  /**
+   * Language extraction.
+   */
   let language: string | undefined;
-  if (qLower.includes('tamil')) {
-    language = 'Tamil';
-  } else if (qLower.includes('english')) {
-    language = 'English';
-  } else if (qLower.includes('hindi')) {
-    language = 'Hindi';
+
+  if (qLower.includes("tamil")) {
+    language = "Tamil";
+  } else if (qLower.includes("english")) {
+    language = "English";
+  } else if (qLower.includes("hindi")) {
+    language = "Hindi";
   }
 
-  // Extract time like '6 pm', '18:00', '7:00 pm'
+  /**
+   * Time extraction.
+   *
+   * Supports:
+   *   6 pm
+   *   6:30 pm
+   *   18:00
+   *   7:00 pm
+   */
   let preferred_time: string | undefined;
-  const timeMatch = query.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)?/);
-  if (timeMatch && (qLower.includes('pm') || qLower.includes('am') || qLower.includes('at') || qLower.includes('clock'))) {
-    let hour = parseInt(timeMatch[1], 10);
-    const minute = timeMatch[2] ? timeMatch[2] : '00';
+
+  const timeMatch = query.match(
+    /(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)?/,
+  );
+
+  if (
+    timeMatch &&
+    (
+      qLower.includes("pm") ||
+      qLower.includes("am") ||
+      qLower.includes("at") ||
+      qLower.includes("clock")
+    )
+  ) {
+    let hour = Number.parseInt(timeMatch[1], 10);
+
+    const minute = timeMatch[2] ?? "00";
     const ampm = timeMatch[3]?.toLowerCase();
-    if (ampm === 'pm' && hour < 12) hour += 12;
-    if (ampm === 'am' && hour === 12) hour = 0;
-    preferred_time = `${hour.toString().padStart(2, '0')}:${minute}:00`;
+
+    if (ampm === "pm" && hour < 12) {
+      hour += 12;
+    }
+
+    if (ampm === "am" && hour === 12) {
+      hour = 0;
+    }
+
+    preferred_time =
+      `${hour.toString().padStart(2, "0")}:${minute}:00`;
   }
 
   return {
@@ -59,9 +177,15 @@ export async function parseNaturalLanguageSearch(query: string): Promise<{
     level,
     language,
     preferred_time,
-    goal: query
+    goal: query,
   };
 }
+
+/**
+ * ============================================================
+ * MATCHING
+ * ============================================================
+ */
 
 export interface MatchCandidate {
   user_id: string;
@@ -71,194 +195,654 @@ export interface MatchCandidate {
   state: string | null;
   preferred_language: string;
   bio: string | null;
+
   skill_id: string;
   skill_name: string;
   skill_level: string;
+
   availability_status: string;
   available_from: string;
   available_until: string;
+
   trust_score: number;
   reliability_score: number;
+
   verification_level: string;
+
   rating_avg: number;
   rating_count: number;
+
   match_percentage: number;
   why_recommended: string;
 }
 
-export function computeMatches(params: {
+export interface ComputeMatchesParams {
   learner_id: string;
   skill_id?: string;
   skill_name?: string;
   level?: string;
   language?: string;
   time?: string;
-}): MatchCandidate[] {
-  // Query all knowledge sharers from real database who share this skill
-  let query = `
-    SELECT 
-      p.user_id,
-      p.full_name,
-      p.profile_photo,
-      p.city,
-      p.state,
-      p.preferred_language,
-      p.bio,
-      s.id as skill_id,
-      s.name as skill_name,
+}
+
+/**
+ * Find real knowledge sharers from PostgreSQL.
+ *
+ * No demo users.
+ * No hard-coded mentor accounts.
+ * No SQLite.
+ *
+ * IMPORTANT:
+ * The old implementation queried public.profiles.
+ * That table is no longer part of the current LearnX database.
+ *
+ * Profile information is now stored in Supabase Auth user metadata.
+ * Therefore auth.users is used for matching profile information.
+ *
+ * Current database columns used:
+ *   auth.users.raw_user_meta_data
+ *   user_skills.user_id
+ *   user_skills.skill_id
+ *   user_skills.skill_type
+ *   user_skills.skill_level
+ *   skills.id
+ *   skills.name
+ *   skills.is_active
+ *   user_availability
+ *   user_reliability
+ *   session_reviews
+ */
+export async function computeMatches(
+  params: ComputeMatchesParams,
+): Promise<MatchCandidate[]> {
+  const rows = await db.$queryRaw<
+    Array<{
+      user_id: string;
+      full_name: string | null;
+      profile_photo: string | null;
+      city: string | null;
+      state: string | null;
+      preferred_language: string | null;
+      bio: string | null;
+
+      skill_id: string;
+      skill_name: string;
+      skill_level: string;
+
+      availability_status: string | null;
+      available_from: string | null;
+      available_until: string | null;
+
+      reliability_score: number | null;
+
+      rating_avg: number | null;
+      rating_count: number | null;
+    }>
+  >`
+    SELECT
+      u.id AS user_id,
+
+      COALESCE(
+        u.raw_user_meta_data ->> 'full_name',
+        split_part(COALESCE(u.email, ''), '@', 1),
+        'LearnX User'
+      ) AS full_name,
+
+      u.raw_user_meta_data ->> 'profile_photo_url' AS profile_photo,
+
+      u.raw_user_meta_data ->> 'city' AS city,
+
+      u.raw_user_meta_data ->> 'state' AS state,
+
+      COALESCE(
+        u.raw_user_meta_data ->> 'preferred_language',
+        'English'
+      ) AS preferred_language,
+
+      u.raw_user_meta_data ->> 'bio' AS bio,
+
+      s.id AS skill_id,
+
+      s.name AS skill_name,
+
       us.skill_level,
-      COALESCE(ua.status, 'INACTIVE') as availability_status,
-      COALESCE(ua.available_from, '18:00:00') as available_from,
-      COALESCE(ua.available_until, '21:00:00') as available_until,
-      COALESCE(ts.score, 85) as trust_score,
-      COALESCE(ts.reliability_score, 90) as reliability_score,
-      COALESCE(sv.verification_level, 'COMMUNITY_VERIFIED') as verification_level,
-      COALESCE((SELECT AVG(overall_score) FROM ratings WHERE ratee_id = p.user_id), 5.0) as rating_avg,
-      COALESCE((SELECT COUNT(*) FROM ratings WHERE ratee_id = p.user_id), 0) as rating_count
-    FROM user_skills us
-    JOIN profiles p ON us.user_id = p.user_id
-    JOIN skills s ON us.skill_id = s.id
-    LEFT JOIN user_availability ua ON p.user_id = ua.user_id
-    LEFT JOIN trust_scores ts ON p.user_id = ts.user_id
-    LEFT JOIN skill_verifications sv ON (sv.user_id = p.user_id AND sv.skill_id = s.id)
-    WHERE us.skill_type = 'SHARE'
-      AND p.user_id != ?
+
+      COALESCE(
+        ua.status,
+        'INACTIVE'
+      ) AS availability_status,
+
+      COALESCE(
+        ua.available_from::text,
+        '17:00:00'
+      ) AS available_from,
+
+      COALESCE(
+        ua.available_until::text,
+        '21:00:00'
+      ) AS available_until,
+
+      COALESCE(
+        ur.reliability_score,
+        90
+      ) AS reliability_score,
+
+      COALESCE(
+        AVG(sr.rating),
+        5.0
+      ) AS rating_avg,
+
+      COUNT(sr.id) AS rating_count
+
+    FROM public.user_skills us
+
+    INNER JOIN auth.users u
+      ON u.id = us.user_id
+
+    INNER JOIN public.skills s
+      ON s.id = us.skill_id
+
+    LEFT JOIN public.user_availability ua
+      ON ua.user_id = u.id
+
+    LEFT JOIN public.user_reliability ur
+      ON ur.user_id = u.id
+
+    LEFT JOIN public.session_reviews sr
+      ON sr.reviewed_user_id = u.id
+
+    WHERE
+      us.skill_type = 'SHARE'
+
+      AND u.id <> ${params.learner_id}
+
+      AND COALESCE(
+        (u.raw_user_meta_data ->> 'is_active')::boolean,
+        true
+      ) = true
+
+      AND s.is_active = true
+
+      ${
+        params.skill_id
+          ? Prisma.sql`AND s.id = ${params.skill_id}`
+          : Prisma.empty
+      }
+
+      ${
+        params.skill_name
+          ? Prisma.sql`AND LOWER(s.name) = LOWER(${params.skill_name})`
+          : Prisma.empty
+      }
+
+    GROUP BY
+      u.id,
+      u.email,
+      u.raw_user_meta_data,
+      s.id,
+      s.name,
+      us.skill_level,
+      ua.status,
+      ua.available_from,
+      ua.available_until,
+      ur.reliability_score
+
+    ORDER BY
+      s.name ASC,
+      full_name ASC
   `;
 
-  const queryParams: any[] = [params.learner_id];
+  const candidates: MatchCandidate[] = [];
 
-  if (params.skill_id) {
-    query += ` AND s.id = ?`;
-    queryParams.push(params.skill_id);
-  } else if (params.skill_name) {
-    query += ` AND LOWER(s.name) = LOWER(?)`;
-    queryParams.push(params.skill_name);
-  }
+  for (const row of rows) {
+    const availabilityStatus = String(
+      row.availability_status ?? "INACTIVE",
+    );
 
-  const candidates = db.prepare(query).all(...queryParams) as any[];
+    const availableFrom = String(
+      row.available_from ?? "17:00:00",
+    );
 
-  return candidates.map((c) => {
-    let score = 70; // baseline for sharing the requested skill
+    const availableUntil = String(
+      row.available_until ?? "21:00:00",
+    );
 
-    // Availability factor (Active sharers prioritized)
-    if (c.availability_status === 'ACTIVE') score += 12;
-    else if (c.availability_status === 'IN_CLASS') score -= 5;
-    else score -= 10;
+    const reliabilityScore = Number(
+      row.reliability_score ?? 90,
+    );
 
-    // Time alignment factor
-    if (params.time) {
-      if (params.time >= c.available_from && params.time <= c.available_until) {
-        score += 8;
-      }
+    /**
+     * The current database does not have separate trust_score
+     * or verification_level columns in user_reliability.
+     *
+     * Keep these response fields for frontend compatibility.
+     *
+     * Trust score is derived from reliability.
+     * Verification level remains a safe descriptive default
+     * until a dedicated verification field is available.
+     */
+    const trustScore = Math.min(
+      100,
+      Math.max(
+        0,
+        Math.round(reliabilityScore),
+      ),
+    );
+
+    const verificationLevel =
+      "COMMUNITY_VERIFIED";
+
+    const ratingAvg = Number(
+      row.rating_avg ?? 5,
+    );
+
+    const ratingCount = Number(
+      row.rating_count ?? 0,
+    );
+
+    const skillLevel = String(
+      row.skill_level ?? "BEGINNER",
+    );
+
+    let score = 70;
+
+    /**
+     * Availability score.
+     */
+    if (availabilityStatus === "ACTIVE") {
+      score += 12;
+    } else if (availabilityStatus === "IN_CLASS") {
+      score -= 5;
+    } else {
+      score -= 10;
     }
 
-    // Language alignment
+    /**
+     * Requested time score.
+     */
+    if (
+      params.time &&
+      params.time >= availableFrom &&
+      params.time <= availableUntil
+    ) {
+      score += 8;
+    }
+
+    /**
+     * Preferred language score.
+     *
+     * The current user_skills table does not contain
+     * a languages column, so matching uses the user's
+     * preferred language from Supabase Auth metadata.
+     */
     if (params.language) {
-      if (c.preferred_language?.toLowerCase().includes(params.language.toLowerCase())) {
-        score += 6;
+      const profileLanguage =
+        row.preferred_language ?? "";
+
+      if (
+        profileLanguage
+          .toLowerCase()
+          .includes(
+            params.language.toLowerCase(),
+          )
+      ) {
+        score += 10;
       }
     }
 
-    // Skill level compatibility:
-    // If learner is BEGINNER, an INTERMEDIATE or ADVANCED sharer is ideal.
+    /**
+     * Skill level score.
+     */
     if (params.level) {
-      if (params.level === 'BEGINNER' && (c.skill_level === 'INTERMEDIATE' || c.skill_level === 'ADVANCED')) {
+      if (
+        params.level === "BEGINNER" &&
+        (
+          skillLevel === "INTERMEDIATE" ||
+          skillLevel === "ADVANCED"
+        )
+      ) {
         score += 4;
-      } else if (params.level === c.skill_level) {
+      } else if (
+        params.level === skillLevel
+      ) {
         score += 3;
       }
     }
 
-    // Reliability & Trust scores
-    const trustBonus = Math.min(5, Math.max(0, ((c.trust_score - 80) / 20) * 5));
+    /**
+     * Reliability / trust bonus.
+     */
+    const trustBonus = Math.min(
+      5,
+      Math.max(
+        0,
+        ((trustScore - 80) / 20) * 5,
+      ),
+    );
+
     score += trustBonus;
 
-    // Clamp score between 60 and 99%
-    const finalPercentage = Math.min(99, Math.max(60, Math.round(score)));
+    /**
+     * Rating bonus.
+     */
+    if (ratingAvg >= 4.5) {
+      score += 2;
+    }
 
-    // Generate human-readable rationale
-    const reasons: string[] = [];
-    reasons.push(`Shares ${c.skill_name} (${c.skill_level})`);
-    if (c.availability_status === 'ACTIVE') {
-      reasons.push(`Currently Active (${c.available_from.slice(0, 5)} - ${c.available_until.slice(0, 5)})`);
-    }
-    if (c.preferred_language) {
-      reasons.push(`Speaks ${c.preferred_language}`);
-    }
-    if (c.rating_avg >= 4.5) {
-      reasons.push(`${Number(c.rating_avg).toFixed(1)}/5.0 Rating`);
-    }
-    reasons.push(`${c.trust_score}% Trust Score`);
+    const finalPercentage = Math.min(
+      99,
+      Math.max(
+        60,
+        Math.round(score),
+      ),
+    );
 
-    return {
-      user_id: c.user_id,
-      full_name: c.full_name,
-      profile_photo: c.profile_photo,
-      city: c.city,
-      state: c.state,
-      preferred_language: c.preferred_language,
-      bio: c.bio,
-      skill_id: c.skill_id,
-      skill_name: c.skill_name,
-      skill_level: c.skill_level,
-      availability_status: c.availability_status,
-      available_from: c.available_from,
-      available_until: c.available_until,
-      trust_score: c.trust_score,
-      reliability_score: c.reliability_score,
-      verification_level: c.verification_level,
-      rating_avg: Number(c.rating_avg),
-      rating_count: c.rating_count,
-      match_percentage: finalPercentage,
-      why_recommended: `${finalPercentage}% Match: ${reasons.join(' · ')}`
-    };
-  }).sort((a, b) => b.match_percentage - a.match_percentage);
+    const reasons: string[] = [
+      `Shares ${row.skill_name} (${skillLevel})`,
+    ];
+
+    if (availabilityStatus === "ACTIVE") {
+      reasons.push(
+        `Currently Active (${availableFrom.slice(0, 5)} - ${availableUntil.slice(0, 5)})`,
+      );
+    }
+
+    if (row.preferred_language) {
+      reasons.push(
+        `Speaks ${row.preferred_language}`,
+      );
+    }
+
+    if (ratingAvg >= 4.5) {
+      reasons.push(
+        `${ratingAvg.toFixed(1)}/5.0 Rating`,
+      );
+    }
+
+    reasons.push(
+      `${trustScore}% Trust Score`,
+    );
+
+    candidates.push({
+      user_id:
+        row.user_id,
+
+      full_name:
+        row.full_name ?? "LearnX User",
+
+      profile_photo:
+        row.profile_photo ?? null,
+
+      city:
+        row.city ?? null,
+
+      state:
+        row.state ?? null,
+
+      preferred_language:
+        row.preferred_language ?? "",
+
+      bio:
+        row.bio ?? null,
+
+      skill_id:
+        row.skill_id,
+
+      skill_name:
+        row.skill_name,
+
+      skill_level:
+        skillLevel,
+
+      availability_status:
+        availabilityStatus,
+
+      available_from:
+        availableFrom,
+
+      available_until:
+        availableUntil,
+
+      trust_score:
+        trustScore,
+
+      reliability_score:
+        reliabilityScore,
+
+      verification_level:
+        verificationLevel,
+
+      rating_avg:
+        ratingAvg,
+
+      rating_count:
+        ratingCount,
+
+      match_percentage:
+        finalPercentage,
+
+      why_recommended:
+        `${finalPercentage}% Match: ${reasons.join(" · ")}`,
+    });
+  }
+
+  candidates.sort(
+    (a, b) =>
+      b.match_percentage -
+      a.match_percentage,
+  );
+
+  return candidates;
 }
 
-// Generate structured 4-week learning plan
-export function generateStructuredLearningPlan(skillName: string, level: string = 'BEGINNER') {
-  return [
-    {
-      week: 1,
-      title: `${skillName} Foundations & Environment Setup`,
-      focus: 'Core syntax, conceptual models, and introductory hands-on practice.',
-      activities: [
-        { id: 'w1-a1', title: 'Setup development tooling and runtime environment', completed: false },
-        { id: 'w1-a2', title: 'Understand foundational principles and basic primitives', completed: false },
-        { id: 'w1-a3', title: 'Execute first working exercise with input/output validation', completed: false },
-        { id: 'w1-a4', title: 'Peer review with a verified knowledge sharer', completed: false }
-      ]
+/**
+ * ============================================================
+ * STRUCTURED LEARNING PLAN
+ * ============================================================
+ */
+
+export interface LearningPlanWeek {
+  week: number;
+  title: string;
+  topics: string[];
+  activities: string[];
+  goal: string;
+}
+
+export interface StructuredLearningPlan {
+  skill: string;
+  level: string;
+  duration_weeks: number;
+  weeks: LearningPlanWeek[];
+}
+
+/**
+ * Generate a structured 4-week learning plan.
+ *
+ * This function does not write anything to the database.
+ * The route can decide whether/when to save it.
+ */
+export function generateStructuredLearningPlan(
+  skillName: string,
+  level: string = "BEGINNER",
+): StructuredLearningPlan {
+  const normalizedLevel =
+    level.toUpperCase();
+
+  return {
+    skill: skillName,
+    level: normalizedLevel,
+    duration_weeks: 4,
+
+    weeks: [
+      {
+        week: 1,
+        title: "Foundation",
+
+        topics: [
+          `${skillName} basics`,
+          "Important terminology",
+          "Core concepts",
+          "Basic tools and environment",
+        ],
+
+        activities: [
+          `Understand the fundamentals of ${skillName}.`,
+          "Practice simple examples.",
+          "Create short notes for important concepts.",
+          "Complete beginner-level exercises.",
+        ],
+
+        goal:
+          `Build a strong foundation in ${skillName}.`,
+      },
+
+      {
+        week: 2,
+        title: "Core Skills",
+
+        topics: [
+          "Core concepts",
+          "Common operations",
+          "Practical examples",
+          "Problem solving",
+        ],
+
+        activities: [
+          "Practice intermediate examples.",
+          "Solve small problems.",
+          "Work with real-world examples.",
+          "Attend a knowledge-sharing session.",
+        ],
+
+        goal:
+          `Develop practical working knowledge of ${skillName}.`,
+      },
+
+      {
+        week: 3,
+        title: "Practical Application",
+
+        topics: [
+          "Real-world use cases",
+          "Mini project concepts",
+          "Best practices",
+          "Debugging and improvement",
+        ],
+
+        activities: [
+          "Build a small practical project.",
+          "Identify and fix mistakes.",
+          "Apply best practices.",
+          "Share what you learned with another learner.",
+        ],
+
+        goal:
+          `Apply ${skillName} to a practical task.`,
+      },
+
+      {
+        week: 4,
+        title: "Project and Assessment",
+
+        topics: [
+          "Mini project",
+          "Revision",
+          "Assessment",
+          "Knowledge sharing",
+        ],
+
+        activities: [
+          "Complete the mini project.",
+          "Revise important concepts.",
+          "Take a skill assessment or quiz.",
+          "Review your learning progress.",
+          "Share one useful concept with another learner.",
+        ],
+
+        goal:
+          `Demonstrate practical understanding of ${skillName}.`,
+      },
+    ],
+  };
+}
+
+/**
+ * ============================================================
+ * SKILL HELPERS
+ * ============================================================
+ */
+
+/**
+ * Returns a real skill by name.
+ */
+export async function findSkillByName(
+  skillName: string,
+) {
+  return db.skill.findFirst({
+    where: {
+      name: {
+        equals: skillName,
+        mode: "insensitive",
+      },
+      isActive: true,
     },
-    {
-      week: 2,
-      title: 'Control Flow, Idioms & Structured Problem Solving',
-      focus: 'Branching logic, loops, iterative structures, and data handling.',
-      activities: [
-        { id: 'w2-a1', title: 'Implement conditional flow controls and validations', completed: false },
-        { id: 'w2-a2', title: 'Build structured iterations and handle edge cases', completed: false },
-        { id: 'w2-a3', title: 'Solve 3 real-world computational challenges', completed: false },
-        { id: 'w2-a4', title: 'Live 1-on-1 scheduled practice session', completed: false }
-      ]
+  });
+}
+
+/**
+ * Returns a real skill by ID.
+ */
+export async function findSkillById(
+  skillId: string,
+) {
+  return db.skill.findUnique({
+    where: {
+      id: skillId,
     },
-    {
-      week: 3,
-      title: 'Modular Architecture & Data Structures',
-      focus: 'Functions, collections, state management, and separation of concerns.',
-      activities: [
-        { id: 'w3-a1', title: 'Decompose monolithic code into modular reusable blocks', completed: false },
-        { id: 'w3-a2', title: 'Work with compound collections and lookup optimizations', completed: false },
-        { id: 'w3-a3', title: 'Take mid-way SkillProof diagnostic quiz', completed: false }
-      ]
+  });
+}
+
+/**
+ * Returns real SHARE skills belonging to a user.
+ */
+export async function getUserShareSkills(
+  userId: string,
+) {
+  return db.userSkill.findMany({
+    where: {
+      userId,
+      skillType: "SHARE",
     },
-    {
-      week: 4,
-      title: 'Capstone Mini-Project & Peer Demonstration',
-      focus: 'End-to-end implementation, documentation, and live walkthrough.',
-      activities: [
-        { id: 'w4-a1', title: 'Design specifications for the capstone scenario', completed: false },
-        { id: 'w4-a2', title: 'Construct full functional solution with error bounds', completed: false },
-        { id: 'w4-a3', title: 'Demonstrate project in LiveKit room to earn verified badge', completed: false }
-      ]
-    }
-  ];
+
+    include: {
+      skill: true,
+    },
+
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+}
+
+/**
+ * Returns real LEARN skills belonging to a user.
+ */
+export async function getUserLearnSkills(
+  userId: string,
+) {
+  return db.userSkill.findMany({
+    where: {
+      userId,
+      skillType: "LEARN",
+    },
+
+    include: {
+      skill: true,
+    },
+
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
 }

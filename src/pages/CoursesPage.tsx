@@ -1,161 +1,392 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
-import { 
-  GraduationCap, 
-  BookOpen, 
-  Award, 
-  Clock, 
-  Calendar, 
-  Plus, 
-  Search, 
-  CheckCircle2, 
-  ExternalLink, 
-  AlertCircle, 
-  X, 
-  ChevronDown, 
-  ChevronUp,
-  Sparkles,
+import {
+  GraduationCap,
+  BookOpen,
+  Award,
+  Clock,
+  Calendar,
+  Plus,
+  Search,
+  CheckCircle2,
+  ExternalLink,
+  AlertCircle,
+  X,
   Building2,
-  Layers
+  BarChart3,
 } from 'lucide-react';
+
+interface Skill {
+  id: string;
+  name: string;
+}
+
+interface Partner {
+  id: string;
+  organizationName?: string;
+  organization_name?: string;
+  status?: string;
+}
 
 interface Course {
   id: string;
-  partner_id?: string;
-  partner_name?: string;
-  name: string;
-  category: string;
-  description: string;
-  duration: string;
-  level?: string;
-  learning_mode?: string;
-  schedule?: string;
-  requirements?: string;
-  syllabus_json: string;
-  learning_outcomes_json?: string;
-  certificate_eligibility: number;
-  status: string;
-  is_demo?: number;
-  partner_verified?: number;
-  external_url?: string;
+  partnerId?: string | null;
+  skillId?: string | null;
+  title: string;
+  description?: string | null;
+  programType?: string;
+  level?: string | null;
+  language?: string | null;
+  durationHours?: number | null;
+  externalUrl?: string | null;
+  certificateAvailable?: boolean;
+  creditRequired?: number;
+  status?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  partner?: Partner | null;
+  skill?: Skill | null;
 }
 
 interface Enrollment {
   id: string;
-  course_id: string;
-  name: string;
-  partner_name?: string;
-  category?: string;
-  duration?: string;
-  schedule?: string;
-  certificate_eligibility?: number;
-  description?: string;
-  progress_percentage: number;
+  programId: string;
+  userId: string;
   status: string;
-  is_demo?: number;
-  enrolled_at: string;
-  completed_at?: string;
+  progressPercentage?: number;
+  enrolledAt?: string;
+  program?: Course | null;
 }
 
-export function CoursesPage({ navigate }: { navigate: (path: string) => void }) {
+interface CourseProgress {
+  id?: string;
+  programId?: string;
+  userId?: string;
+  status?: string;
+  progressPercentage?: number;
+}
+
+interface CourseFormData {
+  partner_id: string;
+  skill_id: string;
+  title: string;
+  description: string;
+  level: string;
+  language: string;
+  duration_hours: string;
+  external_url: string;
+  certificate_available: boolean;
+  credit_required: string;
+  status: string;
+}
+
+export function CoursesPage({
+  navigate,
+}: {
+  navigate: (path: string) => void;
+}) {
   const { user } = useAuth();
+
   const [courses, setCourses] = useState<Course[]>([]);
   const [myEnrollments, setMyEnrollments] = useState<Enrollment[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [skills, setSkills] = useState<Skill[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'ALL' | 'ENROLLED'>('ALL');
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [selectedLevel, setSelectedLevel] = useState('ALL');
-  const [selectedDuration, setSelectedDuration] = useState('ALL');
   const [selectedCertificate, setSelectedCertificate] = useState('ALL');
-  const [enrollmentNotice, setEnrollmentNotice] = useState('');
-  const [expandedSyllabus, setExpandedSyllabus] = useState<Record<string, boolean>>({});
 
-  // Add Partner Course Modal
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState('');
   const [addSuccess, setAddSuccess] = useState('');
 
-  const [formData, setFormData] = useState({
-    partner_name: '',
-    name: '',
-    category: 'Programming',
+  const [formData, setFormData] = useState<CourseFormData>({
+    partner_id: '',
+    skill_id: '',
+    title: '',
     description: '',
-    duration: '4 Weeks (16 Hours)',
-    level: 'ALL_LEVELS',
-    learning_mode: 'ONLINE',
-    schedule: 'Tuesdays & Thursdays, 7:00 PM IST',
-    requirements: 'Open to all motivated learners',
-    syllabus: 'Module 1: Foundations & Architecture\nModule 2: Practical Projects & Lab Work\nModule 3: Advanced Optimization\nModule 4: Final Capstone Assessment',
-    certificate_eligibility: true,
-    external_url: ''
+    level: 'BEGINNER',
+    language: 'English',
+    duration_hours: '',
+    external_url: '',
+    certificate_available: false,
+    credit_required: '0',
+    status: 'PUBLISHED',
   });
 
-  const categories = [
-    'ALL', 'Programming', 'Artificial Intelligence', 'Data Science', 'Web Development',
-    'Cybersecurity', 'Cloud Computing', 'Communication', 'Career Skills', 'Design',
-    'Personal Development', ...Array.from(new Set(courses.map((course) => course.category).filter(Boolean)))
-  ].filter((category, index, all) => all.indexOf(category) === index);
+  const isAdmin = user?.role === 'ADMIN';
+
+  const resetCourseForm = () => {
+    setFormData({
+      partner_id: '',
+      skill_id: '',
+      title: '',
+      description: '',
+      level: 'BEGINNER',
+      language: 'English',
+      duration_hours: '',
+      external_url: '',
+      certificate_available: false,
+      credit_required: '0',
+      status: 'PUBLISHED',
+    });
+  };
 
   const fetchData = async () => {
     setLoading(true);
+    setError('');
+
     try {
-      const res = await apiRequest<{ courses: Course[] }>('/courses');
-      setCourses(res.courses || []);
+      const courseResponse = await apiRequest<
+        Course[] | { courses?: Course[] }
+      >('/courses');
+
+      const loadedCourses = Array.isArray(courseResponse)
+        ? courseResponse
+        : Array.isArray(courseResponse?.courses)
+          ? courseResponse.courses
+          : [];
+
+      setCourses(loadedCourses);
 
       if (user) {
-        const enrollRes = await apiRequest<{ enrollments: Enrollment[] }>('/my-courses');
-        setMyEnrollments(enrollRes.enrollments || []);
+        const enrollmentResponse = await apiRequest<
+          Enrollment[] | { enrollments?: Enrollment[] }
+        >('/my-courses');
+
+        const loadedEnrollments = Array.isArray(enrollmentResponse)
+          ? enrollmentResponse
+          : Array.isArray(enrollmentResponse?.enrollments)
+            ? enrollmentResponse.enrollments
+            : [];
+
+        setMyEnrollments(loadedEnrollments);
+      } else {
+        setMyEnrollments([]);
       }
-    } catch (err) {
-      console.error('Failed to load courses:', err);
+
+      if (isAdmin) {
+        const [partnerResponse, skillResponse] = await Promise.all([
+          apiRequest<Partner[]>('/partners'),
+          apiRequest<Skill[] | { skills?: Skill[] }>('/skills'),
+        ]);
+
+        setPartners(
+          Array.isArray(partnerResponse) ? partnerResponse : []
+        );
+
+        setSkills(
+          Array.isArray(skillResponse)
+            ? skillResponse
+            : Array.isArray(skillResponse?.skills)
+              ? skillResponse.skills
+              : []
+        );
+      } else {
+        setPartners([]);
+        setSkills([]);
+      }
+    } catch (cause: any) {
+      setError(cause?.message || 'Failed to load courses.');
+      setCourses([]);
+      setMyEnrollments([]);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
-  }, [user]);
+    void fetchData();
+  }, [user?.user_id, isAdmin]);
+
+  const categories = useMemo(() => {
+    const values = courses
+      .map((course) => course.skill?.name || 'General')
+      .filter(Boolean);
+
+    return ['ALL', ...Array.from(new Set(values))];
+  }, [courses]);
+
+  const filteredCourses = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    return courses.filter((course) => {
+      const skillName = course.skill?.name || 'General';
+
+      const partnerName =
+        course.partner?.organizationName ||
+        course.partner?.organization_name ||
+        '';
+
+      const matchesSearch =
+        !query ||
+        course.title.toLowerCase().includes(query) ||
+        (course.description || '').toLowerCase().includes(query) ||
+        skillName.toLowerCase().includes(query) ||
+        partnerName.toLowerCase().includes(query);
+
+      const matchesCategory =
+        selectedCategory === 'ALL' ||
+        skillName === selectedCategory;
+
+      const matchesLevel =
+        selectedLevel === 'ALL' ||
+        (course.level || 'BEGINNER') === selectedLevel;
+
+      const matchesCertificate =
+        selectedCertificate === 'ALL' ||
+        Boolean(course.certificateAvailable) ===
+          (selectedCertificate === 'AVAILABLE');
+
+      return (
+        matchesSearch &&
+        matchesCategory &&
+        matchesLevel &&
+        matchesCertificate
+      );
+    });
+  }, [
+    courses,
+    searchQuery,
+    selectedCategory,
+    selectedLevel,
+    selectedCertificate,
+  ]);
+
+  const enrolledCourseIds = useMemo(
+    () => new Set(myEnrollments.map((item) => item.programId)),
+    [myEnrollments]
+  );
 
   const handleEnroll = async (courseId: string) => {
     if (!user) {
-      setEnrollmentNotice('Please log in to continue.');
+      setNotice('Please log in to enroll in a course.');
       return;
     }
 
+    setError('');
+    setNotice('');
+
     try {
-      const course = courses.find((item) => item.id === courseId);
-      const result = await apiRequest(`/courses/${courseId}/enroll`, { method: 'POST' });
+      const result = await apiRequest<
+        Enrollment & { message?: string }
+      >(`/courses/${courseId}/enroll`, {
+        method: 'POST',
+      });
+
       await fetchData();
       setActiveTab('ENROLLED');
-      setEnrollmentNotice(course?.is_demo
-        ? 'Demo enrollment recorded for your account. No payment or Time Credit transaction was created.'
-        : result.message || 'Enrollment recorded for your account.');
-    } catch (err: any) {
-      alert(err.message || 'Failed to enroll');
+
+      setNotice(
+        result?.message || 'You are now enrolled in this course.'
+      );
+    } catch (cause: any) {
+      setError(
+        cause?.message || 'Failed to enroll in the course.'
+      );
     }
   };
 
-  const handleUpdateProgress = async (courseId: string, currentProgress: number, increment: number) => {
-    const nextProgress = Math.min(100, currentProgress + increment);
+  const handleUpdateProgress = async (
+    courseId: string,
+    currentProgress: number,
+    increment: number
+  ) => {
+    if (!user) {
+      setNotice('Please log in to update course progress.');
+      return;
+    }
+
+    const nextProgress = Math.min(
+      100,
+      Math.max(0, currentProgress + increment)
+    );
+
+    setError('');
+    setNotice('');
+
     try {
-      await apiRequest(`/courses/${courseId}/progress`, {
-        method: 'POST',
-        body: { progress: nextProgress }
-      });
+      await apiRequest<CourseProgress>(
+        `/courses/${courseId}/progress`,
+        {
+          method: 'PUT',
+          body: {
+            progress_percentage: nextProgress,
+          },
+        }
+      );
+
       await fetchData();
-    } catch (err: any) {
-      alert(err.message || 'Failed to update progress');
+
+      setNotice(
+        nextProgress >= 100
+          ? 'Course progress reached 100%. Your course is marked as completed.'
+          : 'Course progress updated successfully.'
+      );
+    } catch (cause: any) {
+      setError(
+        cause?.message || 'Failed to update course progress.'
+      );
     }
   };
 
-  const handleCreateCourse = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateCourse = async (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+
     if (!user) {
       navigate('/login');
+      return;
+    }
+
+    if (!isAdmin) {
+      setAddError(
+        'Only administrators can publish partner courses.'
+      );
+      return;
+    }
+
+    if (!formData.partner_id) {
+      setAddError('Please select a partner.');
+      return;
+    }
+
+    if (!formData.title.trim()) {
+      setAddError('Course title is required.');
+      return;
+    }
+
+    const durationHours = Number(formData.duration_hours);
+
+    if (
+      !formData.duration_hours.trim() ||
+      !Number.isFinite(durationHours) ||
+      durationHours <= 0
+    ) {
+      setAddError(
+        'Duration must be a valid number greater than 0.'
+      );
+      return;
+    }
+
+    const creditRequired = Number(
+      formData.credit_required || 0
+    );
+
+    if (!Number.isFinite(creditRequired) || creditRequired < 0) {
+      setAddError(
+        'Time Credits required must be 0 or greater.'
+      );
       return;
     }
 
@@ -166,643 +397,926 @@ export function CoursesPage({ navigate }: { navigate: (path: string) => void }) 
     try {
       await apiRequest('/courses', {
         method: 'POST',
-        body: formData
+        body: {
+          partner_id: formData.partner_id,
+          skill_id: formData.skill_id || null,
+          title: formData.title.trim(),
+          description:
+            formData.description.trim() || null,
+          level: formData.level,
+          language:
+            formData.language.trim() || 'English',
+          duration_hours: durationHours,
+          external_url:
+            formData.external_url.trim() || null,
+          certificate_available:
+            formData.certificate_available,
+          credit_required: creditRequired,
+          status: formData.status,
+        },
       });
 
-      setAddSuccess('Partner course published successfully!');
-      setTimeout(() => {
+      setAddSuccess('Course published successfully.');
+      resetCourseForm();
+
+      await fetchData();
+
+      window.setTimeout(() => {
         setIsAddModalOpen(false);
         setAddSuccess('');
-        fetchData();
-      }, 1200);
-    } catch (err: any) {
-      setAddError(err.message || 'Failed to add partner course');
+      }, 1000);
+    } catch (cause: any) {
+      setAddError(
+        cause?.message || 'Failed to publish the course.'
+      );
     } finally {
       setAddLoading(false);
     }
   };
 
-  const toggleSyllabus = (id: string) => {
-    setExpandedSyllabus(prev => ({ ...prev, [id]: !prev[id] }));
-  };
+  const getPartnerName = (course: Course) =>
+    course.partner?.organizationName ||
+    course.partner?.organization_name ||
+    'Partner not specified';
 
-  const filteredCourses = courses.filter(c => {
-    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (c.partner_name && c.partner_name.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesCategory = selectedCategory === 'ALL' || c.category === selectedCategory;
-    const matchesLevel = selectedLevel === 'ALL' || (c.level || 'ALL_LEVELS') === selectedLevel;
-    const matchesDuration = selectedDuration === 'ALL' || c.duration === selectedDuration;
-    const matchesCertificate = selectedCertificate === 'ALL' || Boolean(c.certificate_eligibility) === (selectedCertificate === 'AVAILABLE');
-    return matchesSearch && matchesCategory && matchesLevel && matchesDuration && matchesCertificate;
-  });
-
-  const enrolledCourseIds = new Set(myEnrollments.map(e => e.course_id));
-  const catalogCourses = [...filteredCourses].sort((a, b) => Number(Boolean(a.is_demo)) - Number(Boolean(b.is_demo)));
-  const durationOptions = Array.from(new Set(courses.map((course) => course.duration).filter(Boolean))).sort();
+  const getProgress = (enrollment: Enrollment) =>
+    Math.min(
+      100,
+      Math.max(
+        0,
+        Number(enrollment.progressPercentage || 0)
+      )
+    );
 
   return (
-    <div className="min-h-screen bg-[#0b0f17] text-slate-100 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto space-y-8">
-        
-        {/* Header Hero */}
-        <div className="rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-900/90 via-[#0e1726]/80 to-slate-900/90 p-6 sm:p-8 relative overflow-hidden shadow-2xl">
-          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-3 max-w-2xl">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/80 border border-cyan-800/60 text-cyan-300 text-xs font-semibold">
+    <div className="min-h-screen bg-[#0b0f17] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-8">
+
+        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-900/90 via-[#0e1726]/80 to-slate-900/90 p-6 shadow-2xl sm:p-8">
+          <div className="relative z-10 flex flex-col justify-between gap-6 md:flex-row md:items-center">
+            <div className="max-w-3xl space-y-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-cyan-800/60 bg-cyan-950/80 px-3 py-1 text-xs font-semibold text-cyan-300">
                 <GraduationCap className="h-3.5 w-3.5" />
-                <span>Structured learning catalog</span>
+                <span>Partner learning catalog</span>
               </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white font-['Space_Grotesk'] tracking-tight">
+
+              <h1 className="font-['Space_Grotesk'] text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
                 Courses
               </h1>
-              <p className="text-sm text-slate-300 leading-relaxed">
-                Explore structured learning courses from our partner ecosystem. Sample entries are clearly marked as demo content.
+
+              <p className="text-sm leading-relaxed text-slate-300">
+                Explore structured courses published through the
+                LearnX partner ecosystem and track your learning
+                progress.
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 shrink-0">
+            {isAdmin && (
               <button
                 onClick={() => {
-                  if (!user) {
-                    navigate('/login');
-                    return;
-                  }
+                  setAddError('');
+                  setAddSuccess('');
+                  resetCourseForm();
                   setIsAddModalOpen(true);
                 }}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-lg shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 transition-all flex items-center gap-2"
+                className="flex shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-cyan-500/20 transition-all hover:from-cyan-400 hover:to-blue-500"
               >
                 <Plus className="h-4 w-4" />
-                <span>Add a Course</span>
+                Add Partner Course
               </button>
-            </div>
+            )}
           </div>
-        </div>
+        </section>
 
-        {enrollmentNotice && (
-          <div role="status" className="flex items-center justify-between gap-3 rounded-xl border border-cyan-800/50 bg-cyan-950/30 px-4 py-3 text-xs text-cyan-100">
-            <span>{enrollmentNotice}</span>
-            <button onClick={() => setEnrollmentNotice('')} className="text-cyan-300 hover:text-white" aria-label="Dismiss message">×</button>
+        {notice && (
+          <div
+            role="status"
+            className="flex items-center justify-between gap-3 rounded-xl border border-cyan-800/50 bg-cyan-950/30 px-4 py-3 text-xs text-cyan-100"
+          >
+            <span>{notice}</span>
+
+            <button
+              onClick={() => setNotice('')}
+              className="text-cyan-300 hover:text-white"
+              aria-label="Dismiss message"
+            >
+              ×
+            </button>
           </div>
         )}
 
-        {/* Tab Navigation & Search Bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+        {error && (
+          <div
+            role="alert"
+            className="flex items-center gap-2 rounded-xl border border-rose-800/50 bg-rose-950/30 px-4 py-3 text-xs text-rose-200"
+          >
+            <AlertCircle className="h-4 w-4 shrink-0" />
+
+            <span>{error}</span>
+
+            <button
+              onClick={() => setError('')}
+              className="ml-auto text-rose-300 hover:text-white"
+              aria-label="Dismiss error"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+        <div className="flex flex-col justify-between gap-4 border-b border-slate-800 pb-4 md:flex-row md:items-center">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setActiveTab('ALL')}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all ${
                 activeTab === 'ALL'
-                  ? 'bg-slate-800 text-cyan-300 border border-slate-700 shadow-sm'
+                  ? 'border border-slate-700 bg-slate-800 text-cyan-300'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <BookOpen className="h-4 w-4" />
-              <span>Catalog ({courses.length})</span>
+              Catalog ({courses.length})
             </button>
+
             {user && (
               <button
                 onClick={() => setActiveTab('ENROLLED')}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
+                className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all ${
                   activeTab === 'ENROLLED'
-                    ? 'bg-slate-800 text-cyan-300 border border-slate-700 shadow-sm'
+                    ? 'border border-slate-700 bg-slate-800 text-cyan-300'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <Award className="h-4 w-4" />
-                <span>My Enrolled Courses ({myEnrollments.length})</span>
+                My Courses ({myEnrollments.length})
               </button>
             )}
           </div>
 
           {activeTab === 'ALL' && (
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="relative w-full sm:w-64">
                 <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-500" />
+
                 <input
                   type="text"
-                  placeholder="Search course name..."
+                  placeholder="Search courses..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl border border-slate-800 bg-slate-900/60 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  onChange={(event) =>
+                    setSearchQuery(event.target.value)
+                  }
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900/60 py-1.5 pl-9 pr-3 text-xs text-slate-200 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
                 />
               </div>
 
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-                {categories.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-colors ${
-                      selectedCategory === cat
-                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                        : 'bg-slate-900/60 text-slate-400 hover:text-slate-200 border border-slate-800'
-                    }`}
-                  >
-                    {cat}
-                  </button>
+              <select
+                aria-label="Filter by skill"
+                value={selectedCategory}
+                onChange={(event) =>
+                  setSelectedCategory(event.target.value)
+                }
+                className="rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-300"
+              >
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category === 'ALL'
+                      ? 'All skills'
+                      : category}
+                  </option>
                 ))}
-              </div>
-              <select aria-label="Filter by level" value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-300">
+              </select>
+
+              <select
+                aria-label="Filter by level"
+                value={selectedLevel}
+                onChange={(event) =>
+                  setSelectedLevel(event.target.value)
+                }
+                className="rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-300"
+              >
                 <option value="ALL">All levels</option>
-                {['BEGINNER', 'BEGINNER_TO_INTERMEDIATE', 'INTERMEDIATE', 'ADVANCED', 'ALL_LEVELS'].map((level) => <option key={level} value={level}>{level.replaceAll('_', ' ')}</option>)}
+                <option value="BEGINNER">Beginner</option>
+                <option value="ELEMENTARY">Elementary</option>
+                <option value="INTERMEDIATE">
+                  Intermediate
+                </option>
+                <option value="ADVANCED">Advanced</option>
               </select>
-              <select aria-label="Filter by duration" value={selectedDuration} onChange={(e) => setSelectedDuration(e.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-300">
-                <option value="ALL">All durations</option>
-                {durationOptions.map((duration) => <option key={duration} value={duration}>{duration}</option>)}
-              </select>
-              <select aria-label="Filter by certificate availability" value={selectedCertificate} onChange={(e) => setSelectedCertificate(e.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-300">
-                <option value="ALL">Any certificate</option><option value="AVAILABLE">Certificate available</option><option value="UNAVAILABLE">No certificate</option>
+
+              <select
+                aria-label="Filter by certificate"
+                value={selectedCertificate}
+                onChange={(event) =>
+                  setSelectedCertificate(event.target.value)
+                }
+                className="rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-300"
+              >
+                <option value="ALL">Any certificate</option>
+                <option value="AVAILABLE">
+                  Certificate available
+                </option>
+                <option value="UNAVAILABLE">
+                  No certificate
+                </option>
               </select>
             </div>
           )}
         </div>
 
-        {/* Content Section */}
         {loading ? (
           <div className="py-20 text-center text-xs text-slate-400">
-            Loading partner courses and programs...
+            Loading courses...
           </div>
         ) : activeTab === 'ENROLLED' ? (
-          /* My Enrolled Courses */
           myEnrollments.length === 0 ? (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-12 text-center space-y-3">
-              <BookOpen className="h-10 w-10 text-slate-500 mx-auto" />
-              <h3 className="text-sm font-bold text-white">No Enrolled Courses Yet</h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Browse the course catalog and enroll using your LearnX account.
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-12 text-center">
+              <BookOpen className="mx-auto h-10 w-10 text-slate-500" />
+
+              <h3 className="mt-3 text-sm font-bold text-white">
+                No enrolled courses
+              </h3>
+
+              <p className="mx-auto mt-2 max-w-md text-xs text-slate-400">
+                Browse the LearnX course catalog and enroll in a
+                course to start tracking your progress.
               </p>
+
               <button
                 onClick={() => setActiveTab('ALL')}
-                className="mt-2 px-4 py-2 rounded-xl bg-cyan-500/20 text-cyan-300 font-semibold text-xs hover:bg-cyan-500/30 transition-colors"
+                className="mt-4 rounded-xl bg-cyan-500/20 px-4 py-2 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/30"
               >
-                Browse Course Catalog
+                Browse Courses
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {myEnrollments.map((enr, idx) => {
-                const isCompleted = enr.progress_percentage >= 100;
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+              {myEnrollments.map((enrollment) => {
+                const course = enrollment.program;
+
+                if (!course) {
+                  return null;
+                }
+
+                const progress = getProgress(enrollment);
+                const completed = progress >= 100;
+
                 return (
                   <div
-                    key={`${enr.id}-${idx}`}
-                    className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 flex flex-col justify-between space-y-5 hover:border-slate-700 transition-all shadow-md"
+                    key={enrollment.id}
+                    className="flex flex-col justify-between space-y-5 rounded-2xl border border-slate-800 bg-slate-900/40 p-6 shadow-md transition-all hover:border-slate-700"
                   >
                     <div className="space-y-4">
                       <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
+                        <div>
                           <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
-                            {enr.partner_name || 'Academic Partner'}
+                            {getPartnerName(course)}
                           </span>
-                          {enr.is_demo ? <span className="ml-2 rounded-md border border-amber-700/60 bg-amber-950/50 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300">Demo course</span> : null}
-                          <h3 className="text-base font-bold text-white font-['Space_Grotesk']">
-                            {enr.name}
+
+                          <h3 className="mt-1 font-['Space_Grotesk'] text-base font-bold text-white">
+                            {course.title}
                           </h3>
                         </div>
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          isCompleted
-                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
-                            : 'bg-cyan-950 text-cyan-300 border border-cyan-800/60'
-                        }`}>
-                          {isCompleted ? 'COMPLETED' : `${enr.progress_percentage}%`}
+
+                        <span
+                          className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
+                            completed
+                              ? 'border-emerald-800/60 bg-emerald-950 text-emerald-300'
+                              : 'border-cyan-800/60 bg-cyan-950 text-cyan-300'
+                          }`}
+                        >
+                          {completed
+                            ? 'COMPLETED'
+                            : `${progress}%`}
                         </span>
                       </div>
 
-                      <p className="text-xs text-slate-400 line-clamp-2">
-                        {enr.description}
+                      <p className="line-clamp-3 text-xs leading-relaxed text-slate-400">
+                        {course.description ||
+                          'No course description provided.'}
                       </p>
 
-                      {/* Progress Bar */}
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-[11px] text-slate-400">
-                          <span>Curriculum Progress</span>
-                          <span className="font-semibold text-white">{enr.progress_percentage}%</span>
+                          <span>Learning Progress</span>
+
+                          <span className="font-semibold text-white">
+                            {progress}%
+                          </span>
                         </div>
-                        <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
                           <div
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              isCompleted
+                            className={`h-full rounded-full transition-all ${
+                              completed
                                 ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
                                 : 'bg-gradient-to-r from-cyan-500 to-blue-500'
                             }`}
-                            style={{ width: `${enr.progress_percentage}%` }}
+                            style={{
+                              width: `${progress}%`,
+                            }}
                           />
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-4 text-[11px] text-slate-400 pt-1">
+                      <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
                         <div className="flex items-center gap-1.5">
                           <Clock className="h-3.5 w-3.5 text-cyan-400" />
-                          <span>{enr.duration}</span>
+
+                          <span>
+                            {course.durationHours != null
+                              ? `${course.durationHours} hours`
+                              : 'Flexible duration'}
+                          </span>
                         </div>
-                        {enr.schedule && (
-                          <div className="flex items-center gap-1.5">
-                            <Calendar className="h-3.5 w-3.5 text-blue-400" />
-                            <span>{enr.schedule}</span>
-                          </div>
-                        )}
+
+                        <div className="flex items-center gap-1.5">
+                          <GraduationCap className="h-3.5 w-3.5 text-blue-400" />
+
+                          <span>
+                            {(course.level || 'BEGINNER').replaceAll(
+                              '_',
+                              ' '
+                            )}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Action buttons */}
-                    <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between gap-3">
-                      {!isCompleted ? (
-                        <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-4">
+                      {!completed ? (
+                        <div className="flex flex-wrap gap-2">
                           <button
-                            onClick={() => handleUpdateProgress(enr.course_id, enr.progress_percentage, 25)}
-                            className="px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 text-xs font-semibold transition-colors"
+                            onClick={() =>
+                              void handleUpdateProgress(
+                                enrollment.programId,
+                                progress,
+                                25
+                              )
+                            }
+                            className="rounded-lg bg-cyan-500/20 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/30"
                           >
-                            +25% Progress
+                            +25%
                           </button>
+
                           <button
-                            onClick={() => handleUpdateProgress(enr.course_id, enr.progress_percentage, 100)}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 text-xs font-semibold transition-colors"
+                            onClick={() =>
+                              void handleUpdateProgress(
+                                enrollment.programId,
+                                progress,
+                                100
+                              )
+                            }
+                            className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/30"
                           >
-                            Complete Course
+                            Complete
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
                           <CheckCircle2 className="h-4 w-4" />
-                          <span>Course Mastered & Verified</span>
+                          Course completed
                         </div>
                       )}
 
-                      {isCompleted && enr.certificate_eligibility && !enr.is_demo ? (
-                        <button
-                          onClick={() => navigate('/certificates')}
-                          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-semibold text-xs shadow-sm hover:from-amber-400 hover:to-orange-500 transition-all flex items-center gap-1.5"
-                        >
-                          <Award className="h-3.5 w-3.5" />
-                          <span>View Certificate</span>
-                        </button>
-                      ) : isCompleted && enr.is_demo ? <span className="text-[10px] text-amber-300">Demo completion · no certificate issued</span> : null}
+                      <button
+                        onClick={() =>
+                          navigate(
+                            `/courses/${enrollment.programId}`
+                          )
+                        }
+                        className="rounded-xl border border-slate-700 px-3.5 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+                      >
+                        View Course
+                      </button>
                     </div>
                   </div>
                 );
               })}
             </div>
           )
+        ) : filteredCourses.length === 0 ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-12 text-center">
+            <Search className="mx-auto h-10 w-10 text-slate-500" />
+
+            <h3 className="mt-3 text-sm font-bold text-white">
+              No courses found
+            </h3>
+
+            <p className="mx-auto mt-2 max-w-md text-xs text-slate-400">
+              Try another search or filter.
+            </p>
+          </div>
         ) : (
-          /* Course Catalog */
-          filteredCourses.length === 0 ? (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-12 text-center space-y-3">
-              <Search className="h-10 w-10 text-slate-500 mx-auto" />
-              <h3 className="text-sm font-bold text-white">No Matching Courses Found</h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Try clearing your search query or choosing another category filter. You can also add a new partner course.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {catalogCourses.map((c, idx) => {
-                const isEnrolled = enrolledCourseIds.has(c.id);
-                const previousCourse = catalogCourses[idx - 1];
-                const startsSection = !previousCourse || Boolean(previousCourse.is_demo) !== Boolean(c.is_demo);
-                let syllabusList: string[] = [];
-                try {
-                  syllabusList = JSON.parse(c.syllabus_json || '[]');
-                } catch {
-                  syllabusList = [];
-                }
-                const isSyllabusOpen = !!expandedSyllabus[c.id];
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            {filteredCourses.map((course) => {
+              const isEnrolled = enrolledCourseIds.has(course.id);
 
-                return (
-                  <React.Fragment key={c.id}>
-                  {startsSection && <div className="md:col-span-2 border-b border-slate-800 pb-2"><h2 className="text-sm font-bold text-white">{c.is_demo ? 'Demo courses' : 'Courses'}</h2><p className="mt-1 text-[11px] text-slate-400">{c.is_demo ? 'Sample catalog records for demonstration only.' : 'Catalog entries from the existing LearnX course records.'}</p></div>}
-                  <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 flex flex-col justify-between space-y-5 hover:border-slate-700 transition-all shadow-md group">
-                    <div className="space-y-4">
-                      {/* Top Badges */}
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-bold">
-                              <Building2 className="h-3 w-3 text-cyan-400" />
-                              <span>Partner: {c.partner_name || 'Provider not specified'}</span>
-                            </span>
-                            {c.is_demo ? <span className="rounded-md border border-amber-700/60 bg-amber-950/50 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300">Demo course</span> : null}
-                            <span className="px-2 py-0.5 rounded-md bg-blue-950/80 border border-blue-800/40 text-blue-300 text-[10px] font-semibold">
-                              {c.category}
-                            </span>
-                          </div>
-                          <h3 className="text-base font-bold text-white font-['Space_Grotesk'] group-hover:text-cyan-300 transition-colors">
-                            {c.name}
-                          </h3>
-                        </div>
+              return (
+                <div
+                  key={course.id}
+                  className="group flex flex-col justify-between space-y-5 rounded-2xl border border-slate-800 bg-slate-900/40 p-6 shadow-md transition-all hover:border-slate-700"
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2.5 py-0.5 text-[10px] font-bold text-slate-300">
+                            <Building2 className="h-3 w-3 text-cyan-400" />
 
-                        <span className="shrink-0 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-slate-300">{c.status}</span>
-                        {c.certificate_eligibility ? (
-                          <span className="shrink-0 px-2 py-1 rounded-lg bg-amber-950/80 border border-amber-800/60 text-amber-300 text-[10px] font-bold flex items-center gap-1">
-                            <Award className="h-3 w-3" />
-                            <span>Certificate</span>
+                            {getPartnerName(course)}
                           </span>
-                        ) : null}
-                      </div>
 
-                      <p className="text-xs text-slate-300 leading-relaxed">
-                        {c.description}
-                      </p>
-
-                      {/* Meta chips */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-950/50 p-3 rounded-xl border border-slate-800/60">
-                        <div className="flex items-center gap-1.5">
-                          <Clock className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
-                          <span>Duration: <strong className="text-slate-200">{c.duration}</strong></span>
-                        </div>
-                        <div className="flex items-center gap-1.5"><GraduationCap className="h-3.5 w-3.5 text-blue-400 shrink-0" /><span>Level: <strong className="text-slate-200">{(c.level || 'ALL_LEVELS').replaceAll('_', ' ')}</strong></span></div>
-                        <div className="flex items-center gap-1.5"><BookOpen className="h-3.5 w-3.5 text-emerald-400 shrink-0" /><span>Mode: <strong className="text-slate-200">{(c.learning_mode || 'ONLINE').replaceAll('_', ' ')}</strong></span></div>
-                        <div className="flex items-center gap-1.5"><Award className="h-3.5 w-3.5 text-amber-400 shrink-0" /><span>Certificate: <strong className="text-slate-200">{c.certificate_eligibility ? 'Available' : 'Not available'}</strong></span></div>
-                        {c.schedule && (
-                          <div className="flex items-center gap-1.5">
-                            <Calendar className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-                            <span>Schedule: <strong className="text-slate-200">{c.schedule}</strong></span>
-                          </div>
-                        )}
-                        {c.requirements && (
-                          <div className="sm:col-span-2 text-[10px] text-slate-400 pt-1 border-t border-slate-800/40">
-                            Prerequisites: <span className="text-slate-300">{c.requirements}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Syllabus accordion */}
-                      {syllabusList.length > 0 && (
-                        <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 overflow-hidden">
-                          <button
-                            onClick={() => toggleSyllabus(c.id)}
-                            className="w-full px-3.5 py-2 flex items-center justify-between text-xs font-semibold text-slate-300 hover:text-white transition-colors"
-                          >
-                            <span className="flex items-center gap-1.5">
-                              <Layers className="h-3.5 w-3.5 text-cyan-400" />
-                              <span>Course Modules ({syllabusList.length})</span>
+                          {course.skill && (
+                            <span className="rounded-md border border-blue-800/40 bg-blue-950/80 px-2 py-0.5 text-[10px] font-semibold text-blue-300">
+                              {course.skill.name}
                             </span>
-                            {isSyllabusOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                          </button>
-
-                          {isSyllabusOpen && (
-                            <div className="px-3.5 pb-3 pt-1 space-y-1.5 border-t border-slate-800/60 text-xs text-slate-300">
-                              {syllabusList.map((mod, sIdx) => (
-                                <div key={sIdx} className="flex items-start gap-2">
-                                  <span className="text-cyan-400 font-bold">•</span>
-                                  <span>{mod}</span>
-                                </div>
-                              ))}
-                            </div>
                           )}
                         </div>
-                      )}
+
+                        <h3 className="font-['Space_Grotesk'] text-base font-bold text-white transition-colors group-hover:text-cyan-300">
+                          {course.title}
+                        </h3>
+                      </div>
+
+                      <span className="shrink-0 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-slate-300">
+                        {course.status || 'PUBLISHED'}
+                      </span>
                     </div>
 
-                    {/* Bottom CTA */}
-                    <div className="pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
-                      {c.external_url ? (
-                        <a
-                          href={c.external_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-slate-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
-                        >
-                          <span>Partner Portal</span>
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      ) : (
-                        <span className="text-[11px] text-slate-500">{c.partner_verified ? 'Verified in LearnX' : 'Provider listing'}</span>
+                    <p className="text-xs leading-relaxed text-slate-300">
+                      {course.description ||
+                        'No description provided for this course.'}
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-800/60 bg-slate-950/50 p-3 text-[11px] text-slate-400 sm:grid-cols-2">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 text-cyan-400" />
+
+                        <span>
+                          Duration:{' '}
+                          <strong className="text-slate-200">
+                            {course.durationHours != null
+                              ? `${course.durationHours} hours`
+                              : 'Not specified'}
+                          </strong>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <GraduationCap className="h-3.5 w-3.5 text-blue-400" />
+
+                        <span>
+                          Level:{' '}
+                          <strong className="text-slate-200">
+                            {(course.level || 'BEGINNER').replaceAll(
+                              '_',
+                              ' '
+                            )}
+                          </strong>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <BookOpen className="h-3.5 w-3.5 text-emerald-400" />
+
+                        <span>
+                          Language:{' '}
+                          <strong className="text-slate-200">
+                            {course.language || 'English'}
+                          </strong>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <Award className="h-3.5 w-3.5 text-amber-400" />
+
+                        <span>
+                          Certificate:{' '}
+                          <strong className="text-slate-200">
+                            {course.certificateAvailable
+                              ? 'Available'
+                              : 'Not available'}
+                          </strong>
+                        </span>
+                      </div>
+
+                      {course.startDate && (
+                        <div className="flex items-center gap-1.5 sm:col-span-2">
+                          <Calendar className="h-3.5 w-3.5 text-blue-400" />
+
+                          <span>
+                            Starts:{' '}
+                            <strong className="text-slate-200">
+                              {new Date(
+                                course.startDate
+                              ).toLocaleDateString()}
+                            </strong>
+                          </span>
+                        </div>
                       )}
 
-                      <button onClick={() => navigate(`/courses/${c.id}`)} className="rounded-xl border border-slate-700 px-3.5 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800">View Course</button>
+                      {course.creditRequired != null &&
+                        course.creditRequired > 0 && (
+                          <div className="flex items-center gap-1.5 sm:col-span-2">
+                            <BarChart3 className="h-3.5 w-3.5 text-cyan-400" />
 
-                      {isEnrolled ? (
-                        <button
-                          onClick={() => setActiveTab('ENROLLED')}
-                          className="px-4 py-2 rounded-xl bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 font-semibold text-xs flex items-center gap-1.5"
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          <span>Enrolled · View Progress</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleEnroll(c.id)}
-                          className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-sm hover:from-cyan-400 hover:to-blue-500 transition-all"
-                        >
-                          Enroll in Course
-                        </button>
-                      )}
+                            <span>
+                              Time Credits required:{' '}
+                              <strong className="text-slate-200">
+                                {course.creditRequired}
+                              </strong>
+                            </span>
+                          </div>
+                        )}
                     </div>
                   </div>
-                  </React.Fragment>
-                );
-              })}
-            </div>
-          )
-        )}
 
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-4">
+                    {course.externalUrl ? (
+                      <a
+                        href={course.externalUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-xs text-slate-400 transition-colors hover:text-cyan-300"
+                      >
+                        <span>Provider Website</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    ) : (
+                      <span className="text-[11px] text-slate-500">
+                        LearnX partner course
+                      </span>
+                    )}
+
+                    <button
+                      onClick={() =>
+                        navigate(`/courses/${course.id}`)
+                      }
+                      className="rounded-xl border border-slate-700 px-3.5 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+                    >
+                      View Course
+                    </button>
+
+                    {isEnrolled ? (
+                      <button
+                        onClick={() =>
+                          setActiveTab('ENROLLED')
+                        }
+                        className="flex items-center gap-1.5 rounded-xl border border-emerald-800/60 bg-emerald-950/80 px-4 py-2 text-xs font-semibold text-emerald-300"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Enrolled
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() =>
+                          void handleEnroll(course.id)
+                        }
+                        className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:from-cyan-400 hover:to-blue-500"
+                      >
+                        Enroll
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Add Partner Course Modal */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-          <div className="w-full max-w-xl rounded-2xl border border-slate-800 bg-[#0f172a] p-6 shadow-2xl space-y-5 my-8">
+      {isAddModalOpen && isAdmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
+          <div className="my-8 w-full max-w-xl space-y-5 rounded-2xl border border-slate-800 bg-[#0f172a] p-6 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="h-8 w-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-500/40 bg-cyan-500/20 text-cyan-300">
                   <GraduationCap className="h-4 w-4" />
                 </div>
+
                 <div>
-                  <h3 className="text-base font-bold text-white font-['Space_Grotesk']">
+                  <h3 className="font-['Space_Grotesk'] text-base font-bold text-white">
                     Add Partner Course
                   </h3>
+
                   <p className="text-xs text-slate-400">
-                    Publish a certified curriculum from your institution or organization
+                    Create a real course in the LearnX partner catalog.
                   </p>
                 </div>
               </div>
+
               <button
-                onClick={() => setIsAddModalOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
+                onClick={() =>
+                  setIsAddModalOpen(false)
+                }
+                className="rounded-lg p-1 text-slate-400 hover:text-white"
+                aria-label="Close"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             {addError && (
-              <div className="flex items-center gap-2 p-3 rounded-xl border border-rose-500/30 bg-rose-950/40 text-rose-300 text-xs">
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+              <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/40 p-3 text-xs text-rose-300">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+
                 <span>{addError}</span>
               </div>
             )}
 
             {addSuccess ? (
-              <div className="py-8 text-center space-y-2">
-                <CheckCircle2 className="h-10 w-10 text-emerald-400 mx-auto" />
-                <h4 className="text-sm font-bold text-white">Course Published!</h4>
-                <p className="text-xs text-slate-300">{addSuccess}</p>
+              <div className="space-y-2 py-8 text-center">
+                <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-400" />
+
+                <h4 className="text-sm font-bold text-white">
+                  Course Published
+                </h4>
+
+                <p className="text-xs text-slate-300">
+                  {addSuccess}
+                </p>
               </div>
             ) : (
-              <form onSubmit={handleCreateCourse} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Provider / Partner Display Name *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Your organization name"
-                      value={formData.partner_name}
-                      onChange={(e) => setFormData({ ...formData, partner_name: e.target.value })}
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
+              <form
+                onSubmit={handleCreateCourse}
+                className="space-y-4"
+              >
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-300">
+                    Partner *
+                  </label>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Course Category *
-                    </label>
-                    <select
-                      value={formData.category}
-                      onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 focus:outline-none focus:border-cyan-500"
-                    >
-                      <option value="Programming">Programming</option>
-                      <option value="Artificial Intelligence">Artificial Intelligence</option>
-                      <option value="Data Science">Data Science</option>
-                      <option value="Web Development">Web Development</option>
-                      <option value="Cybersecurity">Cybersecurity</option>
-                      <option value="Cloud Computing">Cloud Computing</option>
-                      <option value="Communication">Communication</option>
-                      <option value="Career Skills">Career Skills</option>
-                      <option value="Design">Design</option>
-                      <option value="Personal Development">Personal Development</option>
-                      <option value="General">General</option>
-                    </select>
-                  </div>
+                  <select
+                    required
+                    value={formData.partner_id}
+                    onChange={(event) =>
+                      setFormData({
+                        ...formData,
+                        partner_id: event.target.value,
+                      })
+                    }
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                  >
+                    <option value="">
+                      Select approved partner
+                    </option>
+
+                    {partners.map((partner) => (
+                      <option
+                        key={partner.id}
+                        value={partner.id}
+                      >
+                        {partner.organizationName ||
+                          partner.organization_name ||
+                          partner.id}
+                      </option>
+                    ))}
+                  </select>
+
+                  {partners.length === 0 && (
+                    <p className="mt-1 text-[10px] text-amber-300">
+                      No approved partners are currently available.
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="mb-1 block text-xs font-semibold text-slate-300">
+                    Course Skill
+                  </label>
+
+                  <select
+                    value={formData.skill_id}
+                    onChange={(event) =>
+                      setFormData({
+                        ...formData,
+                        skill_id: event.target.value,
+                      })
+                    }
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                  >
+                    <option value="">
+                      Select skill (optional)
+                    </option>
+
+                    {skills.map((skill) => (
+                      <option
+                        key={skill.id}
+                        value={skill.id}
+                      >
+                        {skill.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-300">
                     Course Title *
                   </label>
+
                   <input
-                    type="text"
                     required
-                    placeholder="e.g. Vertex AI Engineering & Cloud Architecture Track"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Description *
-                  </label>
-                  <textarea
-                    rows={2}
-                    required
-                    placeholder="Provide a clear overview of the course outcomes and learning track..."
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Duration *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. 4 Weeks (16 Hours)"
-                      value={formData.duration}
-                      onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Schedule
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Tuesdays & Thursdays, 7:00 PM IST"
-                      value={formData.schedule}
-                      onChange={(e) => setFormData({ ...formData, schedule: e.target.value })}
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Skill Level</label>
-                    <select value={formData.level} onChange={(e) => setFormData({ ...formData, level: e.target.value })} className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 focus:outline-none focus:border-cyan-500">
-                      <option value="ALL_LEVELS">All levels</option><option value="BEGINNER">Beginner</option><option value="INTERMEDIATE">Intermediate</option><option value="ADVANCED">Advanced</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Learning Mode</label>
-                    <select value={formData.learning_mode} onChange={(e) => setFormData({ ...formData, learning_mode: e.target.value })} className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 focus:outline-none focus:border-cyan-500">
-                      <option value="ONLINE">Online</option><option value="OFFLINE">In person</option><option value="HYBRID">Hybrid</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Requirements / Prerequisites
-                  </label>
-                  <input
                     type="text"
-                    placeholder="e.g. Basic Python and Git knowledge"
-                    value={formData.requirements}
-                    onChange={(e) => setFormData({ ...formData, requirements: e.target.value })}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
+                    value={formData.title}
+                    onChange={(event) =>
+                      setFormData({
+                        ...formData,
+                        title: event.target.value,
+                      })
+                    }
+                    placeholder="e.g. Python for Data Science"
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Syllabus Modules (One line per module)
+                  <label className="mb-1 block text-xs font-semibold text-slate-300">
+                    Description
                   </label>
+
                   <textarea
                     rows={3}
-                    placeholder="Module 1: ...&#10;Module 2: ...&#10;Module 3: ..."
-                    value={formData.syllabus}
-                    onChange={(e) => setFormData({ ...formData, syllabus: e.target.value })}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 font-mono text-[11px] placeholder-slate-600 focus:outline-none focus:border-cyan-500"
+                    value={formData.description}
+                    onChange={(event) =>
+                      setFormData({
+                        ...formData,
+                        description: event.target.value,
+                      })
+                    }
+                    placeholder="Describe what learners will gain from this course."
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
                   />
                 </div>
 
-                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-semibold text-white block">Certificate Eligibility</span>
-                    <span className="text-[10px] text-slate-400">Award a verified certificate upon 100% curriculum completion</span>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">
+                      Level
+                    </label>
+
+                    <select
+                      value={formData.level}
+                      onChange={(event) =>
+                        setFormData({
+                          ...formData,
+                          level: event.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                    >
+                      <option value="BEGINNER">
+                        Beginner
+                      </option>
+
+                      <option value="ELEMENTARY">
+                        Elementary
+                      </option>
+
+                      <option value="INTERMEDIATE">
+                        Intermediate
+                      </option>
+
+                      <option value="ADVANCED">
+                        Advanced
+                      </option>
+                    </select>
                   </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">
+                      Duration (hours) *
+                    </label>
+
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      value={formData.duration_hours}
+                      onChange={(event) =>
+                        setFormData({
+                          ...formData,
+                          duration_hours:
+                            event.target.value,
+                        })
+                      }
+                      placeholder="16"
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">
+                      Language
+                    </label>
+
+                    <input
+                      type="text"
+                      value={formData.language}
+                      onChange={(event) =>
+                        setFormData({
+                          ...formData,
+                          language: event.target.value,
+                        })
+                      }
+                      placeholder="English"
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">
+                      Time Credits Required
+                    </label>
+
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.credit_required}
+                      onChange={(event) =>
+                        setFormData({
+                          ...formData,
+                          credit_required:
+                            event.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-300">
+                    Provider Website
+                  </label>
+
+                  <input
+                    type="url"
+                    value={formData.external_url}
+                    onChange={(event) =>
+                      setFormData({
+                        ...formData,
+                        external_url:
+                          event.target.value,
+                      })
+                    }
+                    placeholder="https://example.com/course"
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3">
+                  <div>
+                    <span className="block text-xs font-semibold text-white">
+                      Certificate Available
+                    </span>
+
+                    <span className="text-[10px] text-slate-400">
+                      Mark this only when the partner provides a
+                      certificate.
+                    </span>
+                  </div>
+
                   <input
                     type="checkbox"
-                    checked={formData.certificate_eligibility}
-                    onChange={(e) => setFormData({ ...formData, certificate_eligibility: e.target.checked })}
-                    className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-0"
+                    checked={
+                      formData.certificate_available
+                    }
+                    onChange={(event) =>
+                      setFormData({
+                        ...formData,
+                        certificate_available:
+                          event.target.checked,
+                      })
+                    }
+                    className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-cyan-500"
                   />
                 </div>
 
-                <div className="flex justify-end gap-3 pt-2">
+                <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
                   <button
                     type="button"
-                    onClick={() => setIsAddModalOpen(false)}
+                    onClick={() =>
+                      setIsAddModalOpen(false)
+                    }
                     className="px-4 py-2 text-xs text-slate-400 hover:text-white"
                   >
                     Cancel
                   </button>
+
                   <button
                     type="submit"
-                    disabled={addLoading}
-                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 transition-all"
+                    disabled={
+                      addLoading ||
+                      partners.length === 0
+                    }
+                    className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-xs font-semibold text-white shadow-md shadow-cyan-500/20 transition-all hover:from-cyan-400 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {addLoading ? 'Publishing Course...' : 'Publish Partner Course'}
+                    {addLoading
+                      ? 'Publishing...'
+                      : 'Publish Course'}
                   </button>
                 </div>
               </form>
@@ -814,34 +1328,93 @@ export function CoursesPage({ navigate }: { navigate: (path: string) => void }) 
   );
 }
 
-export function CourseDetailPage({ courseId, navigate }: { courseId: string; navigate: (path: string) => void }) {
+export function CourseDetailPage({
+  courseId,
+  navigate,
+}: {
+  courseId: string;
+  navigate: (path: string) => void;
+}) {
   const { user } = useAuth();
+
   const [course, setCourse] = useState<Course | null>(null);
-  const [loading, setLoading] = useState(true);
   const [enrolled, setEnrolled] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let active = true;
+
     const load = async () => {
+      setLoading(true);
+      setError('');
+
       try {
-        const [courseData, enrollmentData] = await Promise.all([
-          apiRequest(`/courses/${courseId}`),
-          user ? apiRequest('/my-courses') : Promise.resolve({ enrollments: [] })
-        ]);
-        if (!active) return;
-        setCourse(courseData.course);
-        setEnrolled((enrollmentData.enrollments || []).some((enrollment: Enrollment) => enrollment.course_id === courseId));
+        const courseResponse = await apiRequest<Course>(
+          `/courses/${courseId}`
+        );
+
+        let currentProgress: CourseProgress | null = null;
+
+        if (user) {
+          try {
+            currentProgress =
+              await apiRequest<CourseProgress | null>(
+                `/courses/${courseId}/progress`
+              );
+          } catch {
+            currentProgress = null;
+          }
+        }
+
+        if (!active) {
+          return;
+        }
+
+        setCourse(courseResponse);
+
+        const hasEnrollment = Boolean(
+          currentProgress?.programId ||
+          currentProgress?.id
+        );
+
+        setEnrolled(hasEnrollment);
+
+        setProgress(
+          Math.min(
+            100,
+            Math.max(
+              0,
+              Number(
+                currentProgress?.progressPercentage || 0
+              )
+            )
+          )
+        );
       } catch (cause: any) {
-        if (active) setError(cause.message || 'Course details are unavailable.');
+        if (active) {
+          setError(
+            cause?.message ||
+              'Course details are unavailable.'
+          );
+          setCourse(null);
+        }
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     };
-    load();
-    return () => { active = false; };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
   }, [courseId, user?.user_id]);
 
   const enroll = async () => {
@@ -849,72 +1422,330 @@ export function CourseDetailPage({ courseId, navigate }: { courseId: string; nav
       setNotice('Please log in to continue.');
       return;
     }
+
     setSubmitting(true);
     setError('');
+    setNotice('');
+
     try {
-      const result = await apiRequest(`/courses/${courseId}/enroll`, { method: 'POST' });
+      await apiRequest<Enrollment>(
+        `/courses/${courseId}/enroll`,
+        {
+          method: 'POST',
+        }
+      );
+
       setEnrolled(true);
-      setNotice(course?.is_demo
-        ? 'Demo enrollment recorded for your account. No payment, Time Credit transaction, or real certificate was created.'
-        : result.message || 'Enrollment recorded for your account.');
+      setProgress(0);
+
+      setNotice(
+        'You are now enrolled in this course.'
+      );
     } catch (cause: any) {
-      setError(cause.message || 'Enrollment failed.');
+      setError(
+        cause?.message || 'Enrollment failed.'
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
-  const parseList = (value?: string) => {
+  const updateProgress = async (
+    nextProgress: number
+  ) => {
+    if (!user || !enrolled) {
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    setNotice('');
+
+    const safeProgress = Math.min(
+      100,
+      Math.max(0, nextProgress)
+    );
+
     try {
-      const parsed = JSON.parse(value || '[]');
-      return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : [];
-    } catch {
-      return [];
+      const result =
+        await apiRequest<CourseProgress>(
+          `/courses/${courseId}/progress`,
+          {
+            method: 'PUT',
+            body: {
+              progress_percentage: safeProgress,
+            },
+          }
+        );
+
+      const savedProgress = Math.min(
+        100,
+        Math.max(
+          0,
+          Number(
+            result?.progressPercentage ??
+              safeProgress
+          )
+        )
+      );
+
+      setProgress(savedProgress);
+
+      setNotice(
+        savedProgress >= 100
+          ? 'Course completed and progress saved.'
+          : 'Course progress updated.'
+      );
+    } catch (cause: any) {
+      setError(
+        cause?.message ||
+          'Failed to update course progress.'
+      );
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  if (loading) return <div className="mx-auto max-w-4xl px-4 py-20 text-center text-sm text-slate-400">Loading course details...</div>;
-  if (!course) return <div className="mx-auto max-w-4xl px-4 py-20 text-center"><p className="text-sm text-rose-300">{error || 'Course not found.'}</p><button onClick={() => navigate('/courses')} className="mt-4 rounded-xl border border-slate-700 px-4 py-2 text-xs text-white">Back to Courses</button></div>;
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-20 text-center text-sm text-slate-400">
+        Loading course details...
+      </div>
+    );
+  }
 
-  const syllabus = parseList(course.syllabus_json);
-  const outcomes = parseList(course.learning_outcomes_json);
+  if (!course) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-20 text-center">
+        <p className="text-sm text-rose-300">
+          {error || 'Course not found.'}
+        </p>
+
+        <button
+          onClick={() => navigate('/courses')}
+          className="mt-4 rounded-xl border border-slate-700 px-4 py-2 text-xs text-white"
+        >
+          Back to Courses
+        </button>
+      </div>
+    );
+  }
+
+  const partnerName =
+    course.partner?.organizationName ||
+    course.partner?.organization_name ||
+    'Partner not specified';
+
+  const completed = progress >= 100;
 
   return (
     <div className="min-h-screen bg-[#0b0f17] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
       <article className="mx-auto max-w-4xl space-y-6">
-        <button onClick={() => navigate('/courses')} className="text-xs font-semibold text-cyan-300 hover:text-white">← Back to Courses</button>
+        <button
+          onClick={() => navigate('/courses')}
+          className="text-xs font-semibold text-cyan-300 hover:text-white"
+        >
+          ← Back to Courses
+        </button>
+
         <header className="space-y-3 border-b border-slate-800 pb-6">
           <div className="flex flex-wrap items-center gap-2">
-            {course.is_demo ? <span className="rounded-md border border-amber-700/60 bg-amber-950/50 px-2.5 py-1 text-[10px] font-bold uppercase text-amber-300">Demo course · sample data</span> : null}
-            <span className="rounded-md border border-blue-800/50 bg-blue-950/50 px-2.5 py-1 text-[10px] font-semibold text-blue-200">{course.category}</span>
-            <span className="rounded-md border border-slate-700 px-2.5 py-1 text-[10px] font-semibold text-slate-300">{course.status}</span>
+            {course.skill && (
+              <span className="rounded-md border border-blue-800/50 bg-blue-950/50 px-2.5 py-1 text-[10px] font-semibold text-blue-200">
+                {course.skill.name}
+              </span>
+            )}
+
+            <span className="rounded-md border border-slate-700 px-2.5 py-1 text-[10px] font-semibold text-slate-300">
+              {course.status || 'PUBLISHED'}
+            </span>
           </div>
-          <h1 className="text-2xl font-bold text-white sm:text-3xl">{course.name}</h1>
-          <p className="text-sm leading-relaxed text-slate-300">{course.description}</p>
-          <p className="text-xs text-slate-400">Provider: <strong className="text-slate-200">{course.partner_name || 'Not specified'}</strong>{!course.is_demo && course.partner_verified ? <span className="ml-2 text-emerald-300">Verified in LearnX</span> : null}</p>
+
+          <h1 className="text-2xl font-bold text-white sm:text-3xl">
+            {course.title}
+          </h1>
+
+          <p className="text-sm leading-relaxed text-slate-300">
+            {course.description ||
+              'No description provided for this course.'}
+          </p>
+
+          <p className="text-xs text-slate-400">
+            Provider:{' '}
+            <strong className="text-slate-200">
+              {partnerName}
+            </strong>
+          </p>
         </header>
 
-        {notice && <div role="status" className="rounded-xl border border-cyan-800/50 bg-cyan-950/30 px-4 py-3 text-xs text-cyan-100">{notice}</div>}
-        {error && <div role="alert" className="rounded-xl border border-rose-800/50 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">{error}</div>}
+        {notice && (
+          <div
+            role="status"
+            className="rounded-xl border border-cyan-800/50 bg-cyan-950/30 px-4 py-3 text-xs text-cyan-100"
+          >
+            {notice}
+          </div>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            className="rounded-xl border border-rose-800/50 bg-rose-950/30 px-4 py-3 text-xs text-rose-200"
+          >
+            {error}
+          </div>
+        )}
 
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            ['Duration', course.duration],
-            ['Level', (course.level || 'ALL_LEVELS').replaceAll('_', ' ')],
-            ['Learning mode', (course.learning_mode || 'ONLINE').replaceAll('_', ' ')],
-            ['Certificate', course.certificate_eligibility ? 'Available' : 'Not available']
-          ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-800 bg-slate-900/50 p-3"><dt className="text-[10px] uppercase text-slate-500">{label}</dt><dd className="mt-1 text-xs font-semibold text-white">{value}</dd></div>)}
+            [
+              'Duration',
+              course.durationHours != null
+                ? `${course.durationHours} hours`
+                : 'Not specified',
+            ],
+            [
+              'Level',
+              (course.level || 'BEGINNER').replaceAll(
+                '_',
+                ' '
+              ),
+            ],
+            [
+              'Language',
+              course.language || 'English',
+            ],
+            [
+              'Certificate',
+              course.certificateAvailable
+                ? 'Available'
+                : 'Not available',
+            ],
+          ].map(([label, value]) => (
+            <div
+              key={label}
+              className="rounded-xl border border-slate-800 bg-slate-900/50 p-3"
+            >
+              <dt className="text-[10px] uppercase text-slate-500">
+                {label}
+              </dt>
+
+              <dd className="mt-1 text-xs font-semibold text-white">
+                {value}
+              </dd>
+            </div>
+          ))}
         </dl>
 
-        {course.is_demo ? <p className="rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">This is sample demonstration content, not a real-world partnership. Enrollment is recorded for your LearnX account only; no payment, Time Credit charge, or real certificate is issued.</p> : null}
-        {course.requirements ? <section className="space-y-2"><h2 className="text-sm font-bold text-white">Requirements</h2><p className="text-xs leading-relaxed text-slate-300">{course.requirements}</p></section> : null}
-        {outcomes.length > 0 && <section className="space-y-2"><h2 className="text-sm font-bold text-white">Learning outcomes</h2><ul className="list-disc space-y-1 pl-5 text-xs text-slate-300">{outcomes.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></section>}
-        <section className="space-y-2"><h2 className="text-sm font-bold text-white">Syllabus</h2>{syllabus.length ? <ol className="list-decimal space-y-2 pl-5 text-xs text-slate-300">{syllabus.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ol> : <p className="text-xs text-slate-400">Syllabus details have not been provided.</p>}</section>
+        {course.creditRequired != null &&
+          course.creditRequired > 0 && (
+            <section className="rounded-xl border border-cyan-800/40 bg-cyan-950/20 p-4">
+              <p className="text-xs text-cyan-200">
+                This course requires{' '}
+                <strong>
+                  {course.creditRequired} Time Credits
+                </strong>
+                .
+              </p>
+            </section>
+          )}
+
+        {enrolled && (
+          <section className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-cyan-400" />
+
+                <h2 className="text-sm font-bold text-white">
+                  Your Progress
+                </h2>
+              </div>
+
+              <span className="text-xs font-bold text-cyan-300">
+                {progress}%
+              </span>
+            </div>
+
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={`h-full rounded-full ${
+                  completed
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                    : 'bg-gradient-to-r from-cyan-500 to-blue-500'
+                }`}
+                style={{
+                  width: `${progress}%`,
+                }}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {!completed && (
+                <>
+                  <button
+                    onClick={() =>
+                      void updateProgress(
+                        progress + 25
+                      )
+                    }
+                    disabled={submitting}
+                    className="rounded-xl bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+                  >
+                    +25% Progress
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      void updateProgress(100)
+                    }
+                    disabled={submitting}
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    Complete Course
+                  </button>
+                </>
+              )}
+
+              {completed && (
+                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Course completed
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         <div className="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-5">
-          <button onClick={() => void enroll()} disabled={enrolled || submitting} className="rounded-xl bg-cyan-600 px-5 py-2.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:cursor-default disabled:opacity-60">{submitting ? 'Enrolling...' : enrolled ? 'Enrolled' : 'Enroll Now'}</button>
-          {course.external_url && !course.is_demo ? <a href={course.external_url} target="_blank" rel="noopener noreferrer" className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-800">Provider website</a> : null}
-          <button onClick={() => navigate('/courses')} className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-800">Back to Courses</button>
+          <button
+            onClick={() => void enroll()}
+            disabled={enrolled || submitting}
+            className="rounded-xl bg-cyan-600 px-5 py-2.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:cursor-default disabled:opacity-60"
+          >
+            {submitting
+              ? 'Processing...'
+              : enrolled
+                ? 'Enrolled'
+                : 'Enroll Now'}
+          </button>
+
+          {course.externalUrl && (
+            <a
+              href={course.externalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+            >
+              Provider Website
+            </a>
+          )}
+
+          <button
+            onClick={() => navigate('/courses')}
+            className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+          >
+            Back to Courses
+          </button>
         </div>
       </article>
     </div>

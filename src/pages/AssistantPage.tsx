@@ -1,60 +1,136 @@
+
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Bot, Send, Sparkles, BookOpen, Code, HelpCircle, CheckCircle2 } from 'lucide-react';
+import {
+  Bot,
+  Send,
+} from 'lucide-react';
 import { apiRequest } from '../lib/api';
 
-export function AssistantPage({ navigate }: { navigate: (path: string) => void }) {
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  time: string;
+}
+
+const fallbackSkills = [
+  'Python',
+  'Web Development',
+  'English Speaking',
+];
+
+export function AssistantPage({
+  navigate,
+}: {
+  navigate: (path: string) => void;
+}) {
   const { user } = useAuth();
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string; time: string }>>([
+
+  const userSkills = Array.isArray(user?.learn_skills)
+    ? user.learn_skills
+    : [];
+
+  const availableSkills =
+    userSkills.length > 0
+      ? userSkills
+      : fallbackSkills.map((name, index) => ({
+          id: `fallback-${index}`,
+          name,
+        }));
+
+  const initialSkill =
+    userSkills.length > 0
+      ? userSkills[0]?.name || 'Python'
+      : 'Python';
+
+  const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'assistant',
-      text: `Hello ${user?.full_name?.split(' ')[0] || 'there'}! I am your **LearnX AI Learning Mentor**.\n\nI can help you prepare for your peer sessions, explain tricky concepts in Python, Java, Web Development or Communication, and generate custom practice exercises. What topic are you working on?`,
-      time: 'Now'
-    }
+      text: `Hello ${
+        user?.full_name?.split(' ')[0] || 'there'
+      }! I am your LearnX AI Learning Mentor.\n\nI can help you prepare for your peer sessions, explain concepts in Python, Java, Web Development or Communication, and generate custom practice exercises.\n\nWhat topic are you working on?`,
+      time: 'Now',
+    },
   ]);
+
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [selectedSkill, setSelectedSkill] = useState<string>(user?.learn_skills?.[0]?.name || 'Python');
+  const [selectedSkill, setSelectedSkill] =
+    useState<string>(initialSkill);
+
+  const getCurrentTime = () =>
+    new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
 
   const handleSend = async (messageText?: string) => {
-    const textToSend = messageText || input;
-    if (!textToSend.trim() || loading) return;
+    const textToSend =
+      messageText !== undefined
+        ? messageText
+        : input;
 
-    const userMsg = {
-      role: 'user' as const,
-      text: textToSend.trim(),
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const trimmedMessage = textToSend.trim();
+
+    if (!trimmedMessage || loading) {
+      return;
+    }
+
+    const userMessage: ChatMessage = {
+      role: 'user',
+      text: trimmedMessage,
+      time: getCurrentTime(),
     };
 
-    setMessages(prev => [...prev, userMsg]);
-    if (!messageText) setInput('');
+    setMessages((previous) => [
+      ...previous,
+      userMessage,
+    ]);
+
+    if (messageText === undefined) {
+      setInput('');
+    }
+
     setLoading(true);
 
     try {
-      const data = await apiRequest('/ai/assistant', {
+      const data = await apiRequest<{
+        reply?: string;
+        response?: string;
+        message?: string;
+      }>('/ai/assistant', {
         method: 'POST',
-        body: JSON.stringify({
-          message: textToSend.trim(),
-          skill: selectedSkill
-        })
+        body: {
+          message: trimmedMessage,
+          skill: selectedSkill,
+          topic: selectedSkill,
+        },
       });
 
-      setMessages(prev => [
-        ...prev,
+      const assistantReply =
+        data?.reply ||
+        data?.response ||
+        data?.message ||
+        'Here is the requested explanation.';
+
+      setMessages((previous) => [
+        ...previous,
         {
           role: 'assistant',
-          text: data.reply || 'Here is the requested explanation.',
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
+          text: assistantReply,
+          time: getCurrentTime(),
+        },
       ]);
     } catch (err: any) {
-      setMessages(prev => [
-        ...prev,
+      setMessages((previous) => [
+        ...previous,
         {
           role: 'assistant',
-          text: 'I ran into an issue connecting to the AI mentor service. Please try again.',
-          time: 'Now'
-        }
+          text:
+            err?.message ||
+            'I ran into an issue connecting to the LearnX AI mentor service. Please try again.',
+          time: getCurrentTime(),
+        },
       ]);
     } finally {
       setLoading(false);
@@ -65,102 +141,127 @@ export function AssistantPage({ navigate }: { navigate: (path: string) => void }
     `Explain the top 3 foundational concepts of ${selectedSkill}`,
     `Generate a beginner-friendly code example in ${selectedSkill}`,
     `Create 2 practice quiz questions for ${selectedSkill}`,
-    `What are the most common beginner pitfalls in ${selectedSkill}?`
+    `What are the most common beginner pitfalls in ${selectedSkill}?`,
   ];
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white font-['Space_Grotesk'] flex items-center gap-2">
             <Bot className="h-6 w-6 text-cyan-400" />
             AI Learning Mentor
           </h1>
+
           <p className="text-xs text-slate-400 mt-1">
-            Server-side AI assistant designed to prepare you for peer sessions and clarify concepts.
+            Server-side AI assistant designed to
+            prepare you for peer sessions and clarify
+            concepts.
           </p>
         </div>
 
         {/* Skill Selector */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-400">Focus:</span>
+          <span className="text-xs text-slate-400">
+            Focus:
+          </span>
+
           <select
             value={selectedSkill}
-            onChange={(e) => setSelectedSkill(e.target.value)}
+            onChange={(event) =>
+              setSelectedSkill(event.target.value)
+            }
             className="px-3 py-1.5 text-xs rounded-xl border border-slate-800 bg-slate-900 text-white focus:outline-none focus:border-cyan-500"
           >
-            {user?.learn_skills?.map(s => (
-              <option key={s.id} value={s.name}>{s.name}</option>
-            )) || (
-              <>
-                <option value="Python">Python</option>
-                <option value="Web Development">Web Development</option>
-                <option value="English Speaking">English Speaking</option>
-              </>
-            )}
+            {availableSkills.map((skill) => (
+              <option
+                key={skill.id}
+                value={skill.name}
+              >
+                {skill.name}
+              </option>
+            ))}
           </select>
         </div>
       </div>
 
-      {/* Quick Prompts Bar */}
+      {/* Quick Prompts */}
       <div className="flex flex-wrap gap-2">
-        {quickPrompts.map((p, idx) => (
+        {quickPrompts.map((prompt, index) => (
           <button
-            key={idx}
-            onClick={() => handleSend(p)}
-            className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:border-cyan-500/40 text-slate-300 hover:text-white text-xs transition-colors"
+            key={`${prompt}-${index}`}
+            type="button"
+            onClick={() => handleSend(prompt)}
+            disabled={loading}
+            className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:border-cyan-500/40 text-slate-300 hover:text-white text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {p}
+            {prompt}
           </button>
         ))}
       </div>
 
       {/* Chat Container */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/40 backdrop-blur-md flex flex-col h-[520px] shadow-xl overflow-hidden">
-        {/* Messages Scroll Area */}
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
-          {messages.map((m, idx) => (
+          {messages.map((message, index) => (
             <div
-              key={idx}
-              className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              key={`${message.role}-${index}`}
+              className={`flex gap-3 ${
+                message.role === 'user'
+                  ? 'justify-end'
+                  : 'justify-start'
+              }`}
             >
-              {m.role === 'assistant' && (
+              {message.role === 'assistant' && (
                 <div className="h-8 w-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
                   <Bot className="h-4 w-4" />
                 </div>
               )}
+
               <div
                 className={`max-w-xl rounded-2xl p-4 text-xs leading-relaxed ${
-                  m.role === 'user'
+                  message.role === 'user'
                     ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white'
                     : 'bg-slate-950/80 border border-slate-800/80 text-slate-200 whitespace-pre-wrap'
                 }`}
               >
-                {m.text}
-                <div className={`text-[10px] mt-2 ${m.role === 'user' ? 'text-cyan-200' : 'text-slate-500'}`}>
-                  {m.time}
+                {message.text}
+
+                <div
+                  className={`text-[10px] mt-2 ${
+                    message.role === 'user'
+                      ? 'text-cyan-200'
+                      : 'text-slate-500'
+                  }`}
+                >
+                  {message.time}
                 </div>
               </div>
             </div>
           ))}
 
+          {/* Loading */}
           {loading && (
             <div className="flex gap-3 justify-start">
               <div className="h-8 w-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
                 <Bot className="h-4 w-4" />
               </div>
+
               <div className="rounded-2xl p-4 bg-slate-950/80 border border-slate-800/80 text-xs text-slate-400 animate-pulse">
-                Consulting pedagogical models...
+                LearnX AI Mentor is preparing your
+                answer...
               </div>
             </div>
           )}
         </div>
 
-        {/* Input Bar */}
+        {/* Input */}
         <div className="p-3 border-t border-slate-800 bg-slate-950">
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               handleSend();
             }}
             className="flex gap-2"
@@ -168,13 +269,20 @@ export function AssistantPage({ navigate }: { navigate: (path: string) => void }
             <input
               type="text"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(event) =>
+                setInput(event.target.value)
+              }
               placeholder={`Ask anything about ${selectedSkill}...`}
-              className="flex-1 px-4 py-2.5 text-xs rounded-xl border border-slate-800 bg-slate-900 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+              disabled={loading}
+              autoComplete="off"
+              className="flex-1 px-4 py-2.5 text-xs rounded-xl border border-slate-800 bg-slate-900 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 disabled:opacity-60"
             />
+
             <button
               type="submit"
-              disabled={loading || !input.trim()}
+              disabled={
+                loading || !input.trim()
+              }
               className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs disabled:opacity-40 hover:from-cyan-400 hover:to-blue-500 transition-all flex items-center gap-1.5"
             >
               <Send className="h-3.5 w-3.5" />
@@ -182,6 +290,17 @@ export function AssistantPage({ navigate }: { navigate: (path: string) => void }
             </button>
           </form>
         </div>
+      </div>
+
+      {/* Navigation helper */}
+      <div className="flex justify-center">
+        <button
+          type="button"
+          onClick={() => navigate('/discover')}
+          className="text-[11px] text-slate-500 hover:text-cyan-400 transition-colors"
+        >
+          Find a peer to continue learning →
+        </button>
       </div>
     </div>
   );

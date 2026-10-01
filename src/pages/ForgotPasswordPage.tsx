@@ -1,100 +1,182 @@
+
 import React, { useState } from 'react';
-import { Mail, ArrowRight, CheckCircle2, ArrowLeft } from 'lucide-react';
+import {
+  Mail,
+  ArrowRight,
+  CheckCircle2,
+  ArrowLeft,
+} from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-export function ForgotPasswordPage({ navigate }: { navigate: (path: string) => void }) {
+export function ForgotPasswordPage({
+  navigate,
+}: {
+  navigate: (path: string) => void;
+}) {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (
+    e: React.FormEvent
+  ) => {
     e.preventDefault();
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      setError('Please enter your email address.');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
-      await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin + '/reset-password'
-      });
+      /*
+       * Password recovery is handled by Supabase Auth.
+       *
+       * Use the current application origin instead of
+       * hard-coding the production Vercel URL. This allows
+       * the same code to work in local and deployed builds.
+       */
+      const redirectTo =
+        `${window.location.origin}/reset-password`;
+
+      const {
+        error: resetError,
+      } = await supabase.auth.resetPasswordForEmail(
+        cleanEmail,
+        {
+          redirectTo,
+        }
+      );
+
+      if (resetError) {
+        throw resetError;
+      }
+
       setSubmitted(true);
     } catch (err: any) {
-      setError(err.message || 'Could not send reset instructions.');
+      setError(
+        err?.message ||
+          'Could not send password reset instructions.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  if (submitted) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center shadow-xl">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10">
+            <CheckCircle2 className="h-9 w-9 text-emerald-400" />
+          </div>
+
+          <h1 className="text-2xl font-bold text-white">
+            Check Your Email
+          </h1>
+
+          <p className="mt-3 text-sm text-slate-400">
+            If an account exists with this email address,
+            password reset instructions have been sent.
+          </p>
+
+          <p className="mt-2 text-xs text-slate-500">
+            Check your inbox and spam folder for the
+            password reset email.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => navigate('/login')}
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-500"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-[75vh] items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md space-y-6">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+      <div className="w-full max-w-md">
         <button
+          type="button"
           onClick={() => navigate('/login')}
-          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-cyan-400 transition-colors"
+          className="mb-6 flex items-center gap-2 text-sm text-slate-400 transition hover:text-white"
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to Sign In
+          <ArrowLeft className="h-4 w-4" />
+          Back to Login
         </button>
 
-        <div className="text-center">
-          <h2 className="text-2xl font-bold tracking-tight text-white font-['Space_Grotesk']">
-            Reset Password
-          </h2>
-          <p className="mt-1 text-xs text-slate-400">
-            Enter your account email to receive recovery instructions
-          </p>
-        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-xl">
+          <div className="mb-6 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-blue-500/10">
+              <Mail className="h-7 w-7 text-blue-400" />
+            </div>
 
-        {submitted ? (
-          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-6 text-center space-y-3">
-            <CheckCircle2 className="h-10 w-10 text-emerald-400 mx-auto" />
-            <h3 className="text-sm font-bold text-white">Instructions Dispatched</h3>
-            <p className="text-xs text-slate-300">
-              If an account exists for <strong className="text-white">{email}</strong>, a password reset email has been sent.
+            <h1 className="text-2xl font-bold text-white">
+              Forgot Password?
+            </h1>
+
+            <p className="mt-2 text-sm text-slate-400">
+              Enter your email address and we'll send you
+              a password reset link.
             </p>
-            <button
-              onClick={() => navigate('/login')}
-              className="mt-2 py-2 px-4 rounded-xl bg-slate-800 text-white text-xs hover:bg-slate-700"
-            >
-              Return to Sign In
-            </button>
           </div>
-        ) : (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-md shadow-xl">
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-500" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    placeholder="name@example.com"
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-              </div>
 
-              {error && (
-                <div className="text-xs text-rose-400 bg-rose-950/40 p-2.5 rounded-lg border border-rose-900/50">
-                  {error}
-                </div>
-              )}
+          {error && (
+            <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+              {error}
+            </div>
+          )}
 
-              <button
-                type="submit"
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-5"
+          >
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-300">
+                Email Address
+              </label>
+
+              <input
+                type="email"
+                value={email}
+                onChange={(e) =>
+                  setEmail(e.target.value)
+                }
+                placeholder="Enter your email"
+                autoComplete="email"
+                required
                 disabled={loading}
-                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-xs font-semibold shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 transition-all flex items-center justify-center gap-2"
-              >
-                {loading ? 'Sending...' : 'Send Reset Link'}
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
-            </form>
-          </div>
-        )}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500 disabled:opacity-50"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={
+                loading || !email.trim()
+              }
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading
+                ? 'Sending...'
+                : 'Send Reset Link'}
+
+              {!loading && (
+                <ArrowRight className="h-4 w-4" />
+              )}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );

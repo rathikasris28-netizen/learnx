@@ -1,10218 +1,5784 @@
-import { Router, Request, Response } from 'express';
+import {
+  Router,
+  Request,
+  Response,
+  NextFunction,
+} from 'express';
+
 import crypto from 'node:crypto';
+
 import { db } from './db.ts';
-import { supabaseAdmin, supabaseAnon } from './supabase.ts';
-import { createLiveKitToken, LIVEKIT_URL } from './livekit.ts';
+import {
+  supabaseAdmin,
+  supabaseAnon,
+} from './supabase.ts';
+
+import {
+  createLiveKitToken,
+  LIVEKIT_URL,
+} from './livekit.ts';
+
 import {
   parseNaturalLanguageSearch,
   computeMatches,
-  generateStructuredLearningPlan
+  generateStructuredLearningPlan,
 } from './ai.ts';
 
 export const apiRouter = Router();
 
-// -------------------------------------------------------------
-// HEALTH CHECK
-// -------------------------------------------------------------
+/* =========================================================
+   REAL-TIME EVENTS
+========================================================= */
 
-apiRouter.get('/health', (_req: Request, res: Response) => {
-  try {
-    const skillCount =
-      (db.prepare('SELECT COUNT(*) as count FROM skills').get() as any)?.count ?? 0;
-
-    res.json({
-      status: 'healthy',
-      database: 'connected',
-      skill_count: skillCount,
-      timestamp: new Date().toISOString()
-    });
-  } catch (err: any) {
-    res.status(500).json({
-      status: 'unhealthy',
-      error: err.message
-    });
+const events = new Map<
+  string,
+  {
+    event: string;
+    data: unknown;
+    createdAt: number;
   }
-});
+>();
 
-// -------------------------------------------------------------
-// V1 SKILLS
-// -------------------------------------------------------------
+export function broadcastEvent(
+  event: string,
+  data: unknown
+) {
+  const id = crypto.randomUUID();
 
-apiRouter.get('/v1/skills', (req: Request, res: Response) => {
-  const { limit = '100', category, search } = req.query;
-
-  let query = `
-    SELECT *
-    FROM skills
-    WHERE is_active = 1
-  `;
-
-  const params: any[] = [];
-
-  if (category && category !== 'All') {
-    query += ' AND category = ?';
-    params.push(category);
-  }
-
-  if (search) {
-    query += ' AND (name LIKE ? OR description LIKE ?)';
-    params.push(`%${search}%`, `%${search}%`);
-  }
-
-  const safeLimit = Math.min(
-    Math.max(Number(limit) || 100, 1),
-    500
-  );
-
-  query += ' ORDER BY name ASC LIMIT ?';
-  params.push(safeLimit);
-
-  const skills = db.prepare(query).all(...params);
-
-  res.json({
-    success: true,
-    skills
+  events.set(id, {
+    event,
+    data,
+    createdAt: Date.now(),
   });
-});
 
-// -------------------------------------------------------------
-// REAL-TIME SSE
-// -------------------------------------------------------------
+  if (events.size > 500) {
+    const firstKey = events.keys().next().value;
 
-const sseClients = new Set<(event: string, data: any) => void>();
-
-export function broadcastEvent(event: string, data: any) {
-  for (const client of sseClients) {
-    try {
-      client(event, data);
-    } catch {
-      // Client disconnected.
+    if (firstKey) {
+      events.delete(firstKey);
     }
   }
+
+  return id;
 }
 
-apiRouter.get('/events', (req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
+/* =========================================================
+   HELPERS
+========================================================= */
 
-  res.flushHeaders();
+const enumValue = (
+  value: unknown,
+  fallback: string
+) =>
+  String(value ?? fallback).toUpperCase();
 
-  const sendEvent = (event: string, data: any) => {
-    try {
-      res.write(
-        `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
-      );
-    } catch {
-      // Ignore disconnected clients.
-    }
+const isoDate = (
+  value: unknown
+) =>
+  value
+    ? new Date(String(value))
+    : undefined;
+
+const bad = (
+  res: Response,
+  message: string,
+  status = 400
+) =>
+  res.status(status).json({
+    error: message,
+  });
+
+/* =========================================================
+   AUTHENTICATION
+========================================================= */
+
+async function authUser(req: Request) {
+  const header =
+    req.headers.authorization ?? '';
+
+  if (!header.startsWith('Bearer ')) {
+    return null;
+  }
+
+  const token = header.slice(7);
+
+  const {
+    data,
+    error,
+  } =
+    await supabaseAdmin.auth.getUser(
+      token
+    );
+
+  if (error || !data.user) {
+    return null;
+  }
+
+  return data.user;
+}
+
+async function getAppProfile(user: any) {
+  const userId = user.id;
+  const metadata = user.user_metadata ?? {};
+
+  const [
+    userSkills,
+    wallet,
+    availability,
+    reliability,
+  ] = await Promise.all([
+    db.userSkill.findMany({
+      where: {
+        userId,
+        isActive: true,
+      },
+      include: {
+        skill: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    }),
+
+    db.timeCreditWallet.findUnique({
+      where: {
+        userId,
+      },
+    }),
+
+    db.userAvailability.findUnique({
+      where: {
+        userId,
+      },
+    }),
+
+    db.userReliability.findUnique({
+      where: {
+        userId,
+      },
+    }),
+  ]);
+
+  return {
+    id: userId,
+    userId,
+
+    fullName:
+      metadata.full_name ??
+      user.email?.split('@')[0] ??
+      'LearnX User',
+
+    ageGroup:
+      metadata.age_group ?? null,
+
+    city:
+      metadata.city ?? null,
+
+    state:
+      metadata.state ?? null,
+
+    preferredLanguage:
+      metadata.preferred_language ??
+      'English',
+
+    educationWorkStatus:
+      metadata.education_work_status ??
+      null,
+
+    profilePhotoUrl:
+      metadata.profile_photo_url ??
+      null,
+
+    bio:
+      metadata.bio ??
+      null,
+
+    role:
+      metadata.role ??
+      'LEARNER',
+
+    isEmailVerified:
+      Boolean(user.email_confirmed_at),
+
+    onboardingCompleted:
+      Boolean(
+        metadata.onboarding_completed
+      ),
+
+    isActive:
+      metadata.is_active !== false,
+
+    learningGoal:
+      metadata.learning_goal ??
+      null,
+
+    targetLevel:
+      metadata.target_level ??
+      null,
+
+    schedule:
+      metadata.schedule ??
+      null,
+
+    interests:
+      Array.isArray(metadata.interests)
+        ? metadata.interests
+        : [],
+
+    teachingExperience:
+      metadata.teaching_experience ??
+      null,
+
+    teachingLanguages:
+      Array.isArray(
+        metadata.teaching_languages
+      )
+        ? metadata.teaching_languages
+        : [],
+
+    shareSkillDetails:
+      metadata.share_skill_details ??
+      {},
+
+    createdAt:
+      user.created_at
+        ? new Date(user.created_at)
+        : new Date(),
+
+    updatedAt:
+      new Date(),
+
+    userSkills,
+    wallet,
+    availability,
+    reliability,
   };
-
-  sseClients.add(sendEvent);
-
-  sendEvent('connected', {
-    time: new Date().toISOString()
-  });
-
-  req.on('close', () => {
-    sseClients.delete(sendEvent);
-  });
-});
-
-// -------------------------------------------------------------
-// REAL-TIME SYNC FALLBACK
-// -------------------------------------------------------------
-
-apiRouter.get('/sync/events', async (req: Request, res: Response) => {
-  const user = await getAuthenticatedUser(req);
-
-  if (!user) {
-    res.status(401).json({
-      error: 'Unauthorized'
-    });
-    return;
-  }
-
-  const userId = user.user_id;
-
-  const sessions = db.prepare(`
-    SELECT
-      s.*,
-      p.full_name AS other_party_name,
-      sk.name AS skill_name
-    FROM sessions s
-    JOIN profiles p
-      ON p.user_id = CASE
-        WHEN s.learner_id = ?
-        THEN s.knowledge_sharer_id
-        ELSE s.learner_id
-      END
-    JOIN skills sk
-      ON s.skill_id = sk.id
-    WHERE
-      (s.learner_id = ? OR s.knowledge_sharer_id = ?)
-      AND s.updated_at > datetime('now', '-1 minute')
-    ORDER BY s.updated_at DESC
-  `).all(userId, userId, userId);
-
-  const notifications = db.prepare(`
-    SELECT *
-    FROM notifications
-    WHERE user_id = ?
-      AND is_read = 0
-    ORDER BY created_at DESC
-    LIMIT 10
-  `).all(userId);
-
-  res.json({
-    success: true,
-    sessions,
-    notifications,
-    timestamp: Date.now()
-  });
-});
-
-// -------------------------------------------------------------
-// AUTHENTICATED USER HELPER
-// -------------------------------------------------------------
-
-async function getAuthenticatedUser(req: Request) {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !/^Bearer\s+/i.test(authHeader)) {
-    return null;
-  }
-
-  const token = authHeader
-    .replace(/^Bearer\s+/i, '')
-    .trim();
-
-  if (!token) {
-    return null;
-  }
-
-  try {
-    const {
-      data,
-      error
-    } = await supabaseAnon.auth.getUser(token);
-
-    if (error || !data.user) {
-      return null;
-    }
-
-    const userId = data.user.id;
-
-    const profile = db
-      .prepare(`
-        SELECT *
-        FROM profiles
-        WHERE user_id = ?
-      `)
-      .get(userId) as any;
-
-    return profile || null;
-  } catch {
-    return null;
-  }
 }
 
-// -------------------------------------------------------------
-// 1. AUTHENTICATION & PROFILE
-// -------------------------------------------------------------
+async function profileFor(req: Request) {
+  const user = await authUser(req);
+  if (!user) return null;
+  return { user, profile: await getAppProfile(user) };
+}
 
-type RegistrationRole =
-  | 'LEARNER'
-  | 'KNOWLEDGE_SHARER';
-
-// -------------------------------------------------------------
-// REGISTER ACCOUNT
-// -------------------------------------------------------------
-
-async function registerAccount(
+async function requireAuth(
   req: Request,
   res: Response,
-  fixedRole?: RegistrationRole
+  next: NextFunction
 ) {
-  try {
-    const {
-      full_name,
-      email,
-      password,
-      confirm_password,
-      age_group,
-      city,
-      state,
-      preferred_language,
-      education_status,
-      profile_photo,
-      terms_accepted,
-      role: requestedRole
-    } = req.body;
-
-    const role: RegistrationRole | null =
-      fixedRole ??
-      (
-        requestedRole === 'LEARNER'
-          ? 'LEARNER'
-          : requestedRole === 'MENTOR' ||
-            requestedRole === 'KNOWLEDGE_SHARER'
-            ? 'KNOWLEDGE_SHARER'
-            : null
-      );
-
-    const cleanEmail =
-      typeof email === 'string'
-        ? email.trim().toLowerCase()
-        : '';
-
-    const cleanFullName =
-      typeof full_name === 'string'
-        ? full_name.trim()
-        : '';
-
-    const passwordValid =
-      typeof password === 'string' &&
-      password.length >= 8 &&
-      /[A-Z]/.test(password) &&
-      /[a-z]/.test(password) &&
-      /\d/.test(password) &&
-      /[^A-Za-z0-9]/.test(password);
-
-    const allowedAgeGroups = [
-      'Under 18',
-      '18-24',
-      '25-34',
-      '35-44',
-      '45-54',
-      '55+'
-    ];
-
-    const allowedLanguages = [
-      'English',
-      'Tamil',
-      'Hindi',
-      'Telugu',
-      'Malayalam',
-      'Kannada',
-      'Other'
-    ];
-
-    const allowedEducationStatuses = [
-      'School Student',
-      'College Student',
-      'Graduate',
-      'Working Professional',
-      'Self-Employed',
-      'Job Seeker',
-      'Other'
-    ];
-
-    // ---------------------------------------------------------
-    // VALIDATION
-    // ---------------------------------------------------------
-
-    if (!role) {
-      res.status(400).json({
-        error: 'Choose Learner or Mentor registration.'
-      });
-      return;
-    }
-
-    if (
-      !cleanFullName ||
-      !cleanEmail ||
-      typeof age_group !== 'string' ||
-      !age_group ||
-      typeof city !== 'string' ||
-      !city.trim() ||
-      typeof state !== 'string' ||
-      !state.trim() ||
-      typeof preferred_language !== 'string' ||
-      !preferred_language ||
-      typeof education_status !== 'string' ||
-      !education_status
-    ) {
-      res.status(400).json({
-        error:
-          'Full name, email, age group, city, state, preferred language, and education/work status are required.'
-      });
-      return;
-    }
-
-    if (
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
-        cleanEmail
-      )
-    ) {
-      res.status(400).json({
-        error: 'Enter a valid email address.'
-      });
-      return;
-    }
-
-    if (!passwordValid) {
-      res.status(400).json({
-        error:
-          'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'
-      });
-      return;
-    }
-
-    if (
-      typeof confirm_password === 'string' &&
-      confirm_password !== password
-    ) {
-      res.status(400).json({
-        error: 'Password and confirm password do not match.'
-      });
-      return;
-    }
-
-    if (
-      !allowedAgeGroups.includes(age_group) ||
-      !allowedLanguages.includes(preferred_language) ||
-      !allowedEducationStatuses.includes(
-        education_status
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Choose a valid age group, preferred language, and education/work status.'
-      });
-      return;
-    }
-
-    if (terms_accepted !== true) {
-      res.status(400).json({
-        error:
-          'Accept the Terms & Conditions and Privacy Policy to register.'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // LOCAL DUPLICATE CHECK
-    // ---------------------------------------------------------
-
-    const existing = db
-      .prepare(`
-        SELECT id
-        FROM profiles
-        WHERE email = ?
-      `)
-      .get(cleanEmail);
-
-    if (existing) {
-      res.status(409).json({
-        error:
-          'An account with this email already exists.'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // SUPABASE USER CREATION
-    // ---------------------------------------------------------
-
-    const {
-      data: created,
-      error: createError
-    } =
-      await supabaseAdmin.auth.admin.createUser({
-        email: cleanEmail,
-        password,
-        email_confirm: true,
-
-        app_metadata: {
-          learnx_role: role
-        },
-
-        user_metadata: {
-          full_name: cleanFullName,
-          age_group,
-          city: city.trim(),
-          state: state.trim(),
-          preferred_language,
-          education_status
-        }
-      });
-
-    if (createError || !created.user) {
-      const duplicateEmail =
-        /already|registered|exists/i.test(
-          createError?.message || ''
-        );
-
-      res.status(
-        duplicateEmail ? 409 : 400
-      ).json({
-        error: duplicateEmail
-          ? 'An account with this email already exists.'
-          : createError?.message ||
-            'Supabase account creation failed.'
-      });
-
-      return;
-    }
-
-    const supabaseUserId =
-      created.user.id;
-
-    const acceptedAt =
-      new Date().toISOString();
-
-    let welcomeBonus = 0;
-
-    // ---------------------------------------------------------
-    // LOCAL DATABASE TRANSACTION
-    // ---------------------------------------------------------
-
-    try {
-      db.exec('BEGIN IMMEDIATE');
-
-      // -------------------------------------------------------
-      // PROFILE
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT INTO profiles (
-          id,
-          user_id,
-          full_name,
-          email,
-          age_group,
-          city,
-          state,
-          preferred_language,
-          education_status,
-          profile_photo,
-          role,
-          is_email_verified,
-          onboarding_completed,
-          terms_accepted_at
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          1,
-          0,
-          ?
-        )
-      `).run(
-        supabaseUserId,
-        supabaseUserId,
-        cleanFullName,
-        cleanEmail,
-        age_group,
-        city.trim(),
-        state.trim(),
-        preferred_language,
-        education_status,
-        typeof profile_photo === 'string'
-          ? profile_photo.trim()
-          : '',
-        role,
-        acceptedAt
-      );
-
-      // -------------------------------------------------------
-      // WALLET
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT INTO time_credit_accounts (
-          id,
-          user_id,
-          balance,
-          total_earned,
-          total_spent
-        )
-        VALUES (?, ?, 0, 0, 0)
-      `).run(
-        `tc-${supabaseUserId}`,
-        supabaseUserId
-      );
-
-      // -------------------------------------------------------
-      // LEARNER WELCOME BONUS
-      // Exactly once
-      // -------------------------------------------------------
-
-      if (role === 'LEARNER') {
-        const bonus =
-          db.prepare(`
-            INSERT OR IGNORE INTO credit_transactions (
-              id,
-              user_id,
-              amount,
-              transaction_type,
-              status,
-              description
-            )
-            VALUES (
-              ?,
-              ?,
-              5,
-              'WELCOME_BONUS',
-              'COMPLETED',
-              'New Learner Welcome Bonus'
-            )
-          `).run(
-            crypto.randomUUID(),
-            supabaseUserId
-          );
-
-        if (Number(bonus.changes) === 1) {
-          db.prepare(`
-            UPDATE time_credit_accounts
-            SET
-              balance = balance + 5,
-              total_earned = total_earned + 5,
-              updated_at = ?
-            WHERE user_id = ?
-          `).run(
-            acceptedAt,
-            supabaseUserId
-          );
-
-          welcomeBonus = 5;
-        }
-      }
-
-      // -------------------------------------------------------
-      // DEFAULT AVAILABILITY
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT OR IGNORE INTO user_availability (
-          id,
-          user_id,
-          status,
-          available_from,
-          available_until
-        )
-        VALUES (
-          ?,
-          ?,
-          'ACTIVE',
-          '18:00:00',
-          '21:00:00'
-        )
-      `).run(
-        `av-${supabaseUserId}`,
-        supabaseUserId
-      );
-
-      // -------------------------------------------------------
-      // TRUST SCORE
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT OR IGNORE INTO trust_scores (
-          id,
-          user_id,
-          score,
-          reliability_score,
-          verification_level
-        )
-        VALUES (
-          ?,
-          ?,
-          85,
-          90,
-          'COMMUNITY_VERIFIED'
-        )
-      `).run(
-        `ts-${supabaseUserId}`,
-        supabaseUserId
-      );
-
-      // -------------------------------------------------------
-      // WELCOME NOTIFICATION
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT INTO notifications (
-          id,
-          user_id,
-          title,
-          message,
-          type,
-          link
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          'SYSTEM',
-          '/onboarding'
-        )
-      `).run(
-        crypto.randomUUID(),
-        supabaseUserId,
-        'Welcome to LearnX!',
-        'Complete your onboarding to personalize your experience.'
-      );
-
-      // -------------------------------------------------------
-      // AUDIT LOG
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT INTO audit_logs (
-          id,
-          actor_id,
-          action,
-          target_type,
-          target_id,
-          details_json
-        )
-        VALUES (
-          ?,
-          ?,
-          'USER_REGISTER',
-          'USER',
-          ?,
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        supabaseUserId,
-        supabaseUserId,
-        JSON.stringify({
-          email: cleanEmail,
-          role
-        })
-      );
-
-      db.exec('COMMIT');
-    } catch (databaseError) {
-      db.exec('ROLLBACK');
-
-      // Supabase account must not remain if
-      // local LearnX registration failed.
-      await supabaseAdmin.auth.admin
-        .deleteUser(supabaseUserId)
-        .catch(() => {});
-
-      throw databaseError;
-    }
-
-    // ---------------------------------------------------------
-    // AUTOMATIC LOGIN
-    // ---------------------------------------------------------
-
-    let accessToken: string | null = null;
-
-    try {
-      const signedIn =
-        await supabaseAnon.auth.signInWithPassword({
-          email: cleanEmail,
-          password
-        });
-
-      if (
-        !signedIn.error &&
-        signedIn.data.session?.access_token
-      ) {
-        accessToken =
-          signedIn.data.session.access_token;
-      }
-    } catch {
-      accessToken = null;
-    }
-
-    // ---------------------------------------------------------
-    // RESPONSE
-    // ---------------------------------------------------------
-
-    const profile =
-      db.prepare(`
-        SELECT *
-        FROM profiles
-        WHERE user_id = ?
-      `).get(supabaseUserId) as any;
-
-    const wallet =
-      db.prepare(`
-        SELECT *
-        FROM time_credit_accounts
-        WHERE user_id = ?
-      `).get(supabaseUserId) as any;
-
-    res.status(201).json({
-      success: true,
-      message: 'Registration successful.',
-
-      user_id: supabaseUserId,
-
-      role,
-
-      welcome_bonus: welcomeBonus,
-
-      email_confirmed: true,
-
-      authenticated: Boolean(accessToken),
-
-      token: accessToken,
-
-      user: {
-        id: profile.user_id,
-        user_id: profile.user_id,
-
-        email: profile.email,
-
-        full_name: profile.full_name,
-
-        role: profile.role,
-
-        is_email_verified: true,
-
-        onboarding_completed: false,
-
-        preferred_language:
-          profile.preferred_language,
-
-        city: profile.city,
-
-        state: profile.state,
-
-        profile_photo:
-          profile.profile_photo,
-
-        wallet_balance:
-          wallet?.balance ?? 0,
-
-        total_earned_credits:
-          wallet?.total_earned ?? 0,
-
-        total_spent_credits:
-          wallet?.total_spent ?? 0
-      }
-    });
-  } catch (err: any) {
-    res.status(500).json({
-      error:
-        err.message ||
-        'Failed to complete registration.'
-    });
+  const auth = await profileFor(req);
+
+  if (!auth) {
+    return bad(
+      res,
+      'Authentication required',
+      401
+    );
   }
+
+  if (
+    !auth.user.email_confirmed_at
+  ) {
+    return bad(
+      res,
+      'Please verify your email before accessing LearnX.',
+      403
+    );
+  }
+
+  (req as any).auth = auth;
+
+  next();
+}
+async function requireAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const auth = await profileFor(req);
+  if (!auth) return bad(res, 'Authentication required', 401);
+  if (auth.profile.role !== 'ADMIN') return bad(res, 'Admin access required', 403);
+  (req as any).auth = auth;
+  next();
 }
 
-// -------------------------------------------------------------
-// REGISTRATION ROUTES
-// -------------------------------------------------------------
+function auth(req: Request): { user: any; profile: any } {
+  return (req as any).auth;
+}
+
+function publicProfile(p: any) {
+  if (!p) return null;
+
+  const learnSkills = (p.userSkills ?? [])
+    .filter((x: any) => x.skillType === 'LEARN')
+    .map((x: any) => ({ ...x.skill, skill_level: x.skillLevel }));
+
+  const shareSkills = (p.userSkills ?? [])
+    .filter((x: any) => x.skillType === 'SHARE')
+    .map((x: any) => ({ ...x.skill, skill_level: x.skillLevel }));
+
+  return {
+    ...p,
+    user_id: p.id,
+    profile_photo: p.profilePhotoUrl,
+    learn_skills: learnSkills,
+    share_skills: shareSkills,
+    userSkills: undefined,
+  };
+}
+
+/* =========================================================
+   HEALTH
+========================================================= */
+
+apiRouter.get(
+  '/health',
+  async (_req, res) => {
+    try {
+      const [
+        skills,
+        users,
+      ] =
+        await Promise.all([
+          db.skill.count({
+            where: {
+              isActive: true,
+            },
+          }),
+
+          db.timeCreditWallet.count(),
+        ]);
+
+      res.json({
+        status: 'ok',
+        database:
+          'Supabase PostgreSQL',
+        skills,
+        users,
+      });
+    } catch (e) {
+      res.status(503).json({
+        status: 'error',
+        database: 'unavailable',
+        error: String(e),
+      });
+    }
+  }
+);
+
+apiRouter.get(
+  '/v1/health',
+  async (_req, res) => {
+    try {
+      await db.$queryRaw`
+        SELECT 1
+      `;
+
+      res.json({
+        status: 'ok',
+        database:
+          'Supabase PostgreSQL',
+      });
+    } catch (e) {
+      res.status(503).json({
+        status: 'error',
+        error: String(e),
+      });
+    }
+  }
+);
+
+/* =========================================================
+   SKILLS
+========================================================= */
+
+const listSkills = async (
+  _req: Request,
+  res: Response
+) => {
+  const skills =
+    await db.skill.findMany({
+      where: {
+        isActive: true,
+      },
+
+      orderBy: [
+        {
+          category:
+            'asc',
+        },
+
+        {
+          name:
+            'asc',
+        },
+      ],
+    });
+
+  return res.json(
+    skills
+  );
+};
+
+apiRouter.get(
+  '/v1/skills',
+  listSkills
+);
+
+apiRouter.get(
+  '/skills',
+  listSkills
+);
+
+apiRouter.get(
+  '/skills/:id',
+  async (req, res) => {
+    const skill =
+      await db.skill.findFirst({
+        where: {
+          id:
+            req.params.id,
+
+          isActive:
+            true,
+        },
+      });
+
+    if (!skill) {
+      return bad(
+        res,
+        'Skill not found',
+        404
+      );
+    }
+
+    return res.json(
+      skill
+    );
+  }
+);
+/* =========================================================
+   EVENTS
+========================================================= */
+
+apiRouter.get(
+  '/events',
+  async (_req, res) => {
+    res.json(
+      [
+        ...events.entries(),
+      ].map(
+        ([
+          id,
+          event,
+        ]) => ({
+          id,
+          ...event,
+        })
+      )
+    );
+  }
+);
+
+apiRouter.get(
+  '/sync/events',
+  async (req, res) => {
+    const since =
+      Number(
+        req.query.since ?? 0
+      );
+
+    res.json(
+      [
+        ...events.entries(),
+      ]
+        .filter(
+          ([, x]) =>
+            x.createdAt > since
+        )
+        .map(
+          ([id, x]) => ({
+            id,
+            ...x,
+          })
+        )
+    );
+  }
+);
+
+/* =========================================================
+   REGISTRATION
+========================================================= */
+async function register(
+  req: Request,
+  res: Response,
+  forcedRole?:
+    | 'LEARNER'
+    | 'KNOWLEDGE_SHARER'
+) {
+  const b =
+    req.body ?? {};
+
+  /*
+   * Frontend uses:
+   *
+   * LEARNER
+   * MENTOR
+   *
+   * Backend/database uses:
+   *
+   * LEARNER
+   * KNOWLEDGE_SHARER
+   *
+   * Therefore MENTOR is converted here.
+   */
+
+  const requestedRole =
+    enumValue(
+      b.role,
+      'LEARNER'
+    );
+
+  const role =
+    forcedRole ??
+    (
+      requestedRole ===
+      'MENTOR'
+        ? 'KNOWLEDGE_SHARER'
+        : requestedRole
+    );
+
+  if (
+    ![
+      'LEARNER',
+      'KNOWLEDGE_SHARER',
+    ].includes(role)
+  ) {
+    return bad(
+      res,
+      'Invalid registration role'
+    );
+  }
+
+  if (
+    !b.email ||
+    !b.password ||
+    !b.full_name
+  ) {
+    return bad(
+      res,
+      'full_name, email and password are required'
+    );
+  }
+
+  const shareSkills =
+    b.share_skills ??
+    b.skills_to_share ??
+    b.skills_you_will_share ??
+    [];
+
+  /*
+   * Knowledge Sharer / Mentor must
+   * select at least one skill to share.
+   */
+
+  if (
+    role === 'KNOWLEDGE_SHARER' &&
+    (!Array.isArray(shareSkills) ||
+      shareSkills.length === 0)
+  ) {
+    return bad(
+      res,
+      'Please select at least one skill you will share.'
+    );
+  }
+
+  /*
+   * Create Supabase authentication account.
+   *
+   * Email is intentionally NOT confirmed here.
+   * The user must verify the email first.
+   */
+
+  const {
+    data,
+    error,
+  } =
+    await supabaseAdmin.auth.admin.createUser(
+      {
+        email: String(
+          b.email
+        ).trim().toLowerCase(),
+
+        password:
+          String(b.password),
+
+        email_confirm: false,
+
+        user_metadata: {
+          full_name:
+            String(
+              b.full_name
+            ).trim(),
+        },
+      }
+    );
+
+  if (
+    error ||
+    !data.user
+  ) {
+    return bad(
+      res,
+      error?.message ??
+        'Registration failed',
+      400
+    );
+  }
+
+  const user =
+    data.user;
+
+  try {
+    /*
+     * Database transaction:
+     *
+     * 1. Create wallet
+     * 2. Learner gets +5 welcome credits
+     * 3. Mentor starts with 0 credits
+     * 4. Save mentor sharing skills
+     */
+
+    const result =
+      await db.$transaction(
+        async (tx) => {
+          const welcomeBonus =
+            role === 'LEARNER'
+              ? 5
+              : 0;
+
+          /*
+           * Store registration/profile
+           * information in Supabase metadata.
+           */
+
+          await supabaseAdmin.auth.admin.updateUserById(
+            user.id,
+            {
+              user_metadata: {
+                ...(user.user_metadata ?? {}),
+
+                full_name:
+                  String(
+                    b.full_name
+                  ).trim(),
+
+                age_group:
+                  b.age_group ??
+                  null,
+
+                city:
+                  b.city ??
+                  null,
+
+                state:
+                  b.state ??
+                  null,
+
+                preferred_language:
+                  b.preferred_language ??
+                  'English',
+
+                education_work_status:
+                  b.education_work_status ??
+                  null,
+
+                profile_photo_url:
+                  b.profile_photo_url ??
+                  null,
+
+                role,
+
+                bio:
+                  b.bio ??
+                  null,
+
+                onboarding_completed:
+                  false,
+
+                is_active:
+                  true,
+              },
+            }
+          );
+
+          /*
+           * Create Time Credit wallet.
+           *
+           * Learner:
+           * +5 credits
+           *
+           * Knowledge Sharer:
+           * 0 credits
+           */
+
+          const wallet =
+            await tx.timeCreditWallet.create(
+              {
+                data: {
+                  userId:
+                    user.id,
+
+                  balance:
+                    welcomeBonus,
+                },
+              }
+            );
+
+          /*
+           * Record learner welcome
+           * bonus in the transaction ledger.
+           */
+
+          if (
+            role ===
+            'LEARNER'
+          ) {
+            await tx.timeCreditTransaction.create(
+              {
+                data: {
+                  userId:
+                    user.id,
+
+                  amount:
+                    5,
+
+                  transactionType:
+                    'ADJUSTMENT',
+
+                  description:
+                    'Welcome bonus',
+                },
+              }
+            );
+          }
+
+          /*
+           * Save Mentor / Knowledge Sharer
+           * skills INSIDE the same transaction.
+           */
+
+          if (
+            role ===
+            'KNOWLEDGE_SHARER'
+          ) {
+            await saveSkills(
+              user.id,
+              shareSkills,
+              'SHARE',
+              tx
+            );
+          }
+
+          /*
+           * Do NOT call getAppProfile()
+           * here.
+           *
+           * The transaction client (tx) and
+           * normal Prisma client (db) are
+           * different clients.
+           *
+           * Profile is fetched after the
+           * transaction finishes.
+           */
+
+          return {
+            wallet,
+            welcomeBonus,
+          };
+        }
+      );
+
+    /*
+     * Get the latest Supabase user after
+     * registration metadata has been updated.
+     */
+
+    const freshUser =
+      await supabaseAdmin.auth.admin.getUserById(
+        user.id
+      );
+
+    /*
+     * Fetch the fresh application profile
+     * after the transaction has committed.
+     */
+
+    const profile =
+      await getAppProfile(
+        freshUser.data.user ??
+          user
+      );
+
+    /*
+     * Registration does NOT automatically
+     * authenticate the user.
+     *
+     * Email verification is required first.
+     */
+
+    return res
+      .status(201)
+      .json({
+        user: {
+          id:
+            user.id,
+
+          user_id:
+            user.id,
+
+          email:
+            user.email,
+
+          email_confirmed:
+            false,
+
+          role,
+
+          wallet_balance:
+            result.wallet
+              .balance,
+        },
+
+        profile:
+          publicProfile(
+            profile
+          ),
+
+        user_id:
+          user.id,
+
+        email_confirmed:
+          false,
+
+        role,
+
+        welcome_bonus:
+          result.welcomeBonus,
+
+        balance:
+          result.wallet
+            .balance,
+
+        authenticated:
+          false,
+
+        requires_email_verification:
+          true,
+      });
+  } catch (e) {
+    /*
+     * If the database transaction fails,
+     * remove the Supabase auth account so
+     * registration does not leave a
+     * half-created user behind.
+     */
+
+    await supabaseAdmin.auth.admin
+      .deleteUser(
+        user.id
+      )
+      .catch(
+        () => undefined
+      );
+
+    return bad(
+      res,
+      String(e),
+      500
+    );
+  }
+}
 
 apiRouter.post(
   '/auth/register',
-  async (req: Request, res: Response) =>
-    registerAccount(req, res)
+  (req, res) =>
+    register(req, res)
 );
+
+/*
+ * Explicit learner registration.
+ */
 
 apiRouter.post(
   '/auth/register/learner',
-  async (req: Request, res: Response) =>
-    registerAccount(
+  (req, res) =>
+    register(
       req,
       res,
       'LEARNER'
     )
 );
 
+/*
+ * Explicit mentor registration.
+ *
+ * Frontend calls this role MENTOR,
+ * database stores KNOWLEDGE_SHARER.
+ */
+
 apiRouter.post(
   '/auth/register/mentor',
-  async (req: Request, res: Response) =>
-    registerAccount(
+  (req, res) =>
+    register(
       req,
       res,
       'KNOWLEDGE_SHARER'
     )
 );
 
-// -------------------------------------------------------------
-// LOGIN
-// -------------------------------------------------------------
+/* =========================================================
+   LOGIN
+========================================================= */
 
 apiRouter.post(
   '/auth/login',
-  async (req: Request, res: Response) => {
-    try {
-      const {
-        email,
-        password
-      } = req.body;
+  async (req, res) => {
+    const {
+      email,
+      password,
+    } = req.body ?? {};
 
-      if (!email || !password) {
-        res.status(400).json({
-          error:
-            'Email and password are required.'
-        });
-        return;
-      }
-
-      const cleanEmail =
-        String(email)
-          .trim()
-          .toLowerCase();
-
-      let authData: any;
-
-      try {
-        const authRes =
-          await supabaseAnon.auth
-            .signInWithPassword({
-              email: cleanEmail,
-              password
-            });
-
-        if (
-          authRes.error ||
-          !authRes.data.session
-        ) {
-          res.status(401).json({
-            error:
-              'Invalid email or password.'
-          });
-          return;
-        }
-
-        authData =
-          authRes.data;
-      } catch {
-        res.status(503).json({
-          error:
-            'Authentication service is unavailable.'
-        });
-        return;
-      }
-
-      let profile =
-        db.prepare(`
-          SELECT *
-          FROM profiles
-          WHERE email = ?
-        `).get(cleanEmail) as any;
-
-      // -------------------------------------------------------
-      // RECOVER PROFILE IF SUPABASE USER EXISTS
-      // -------------------------------------------------------
-
-      if (!profile && authData.user) {
-        const u =
-          authData.user;
-
-        const meta =
-          u.user_metadata || {};
-
-        const requestedRole =
-          u.app_metadata
-            ?.learnx_role;
-
-        const profileRole =
-          requestedRole ===
-          'KNOWLEDGE_SHARER'
-            ? 'KNOWLEDGE_SHARER'
-            : 'LEARNER';
-
-        db.prepare(`
-          INSERT INTO profiles (
-            id,
-            user_id,
-            full_name,
-            email,
-            age_group,
-            city,
-            state,
-            preferred_language,
-            role,
-            is_email_verified,
-            onboarding_completed
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            0
-          )
-        `).run(
-          u.id,
-          u.id,
-          meta.full_name ||
-            cleanEmail.split('@')[0],
-          cleanEmail,
-          meta.age_group ||
-            '18-24',
-          meta.city || '',
-          meta.state || '',
-          meta.preferred_language ||
-            'English',
-          profileRole,
-          u.confirmed_at ? 1 : 0
-        );
-
-        profile =
-          db.prepare(`
-            SELECT *
-            FROM profiles
-            WHERE user_id = ?
-          `).get(u.id);
-      }
-
-      if (!profile) {
-        res.status(401).json({
-          error:
-            'Account profile is unavailable.'
-        });
-        return;
-      }
-
-      // -------------------------------------------------------
-      // ENSURE WALLET EXISTS
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT OR IGNORE INTO time_credit_accounts (
-          id,
-          user_id,
-          balance,
-          total_earned,
-          total_spent
-        )
-        VALUES (?, ?, 0, 0, 0)
-      `).run(
-        `tc-${profile.user_id}`,
-        profile.user_id
+    if (
+      !email ||
+      !password
+    ) {
+      return bad(
+        res,
+        'Email and password are required'
       );
+    }
 
-      const wallet =
-        db.prepare(`
-          SELECT *
-          FROM time_credit_accounts
-          WHERE user_id = ?
-        `).get(
-          profile.user_id
-        ) as any;
+    const {
+      data,
+      error,
+    } =
+      await supabaseAnon.auth.signInWithPassword({
+        email: String(
+          email
+        ).trim().toLowerCase(),
 
-      const availability =
-        db.prepare(`
-          SELECT *
-          FROM user_availability
-          WHERE user_id = ?
-        `).get(
-          profile.user_id
-        ) as any;
+        password:
+          String(password),
+      });
 
-      res.json({
-        success: true,
+    /*
+     * Invalid email/password.
+     */
 
-        user: {
-          id: profile.user_id,
+    if (error) {
+      return bad(
+        res,
+        error.message,
+        401
+      );
+    }
 
-          user_id:
-            profile.user_id,
+    /*
+     * Supabase should return a session
+     * for a successful login.
+     */
+
+    if (
+      !data.session ||
+      !data.user
+    ) {
+      return bad(
+        res,
+        'Login failed',
+        401
+      );
+    }
+
+    /*
+     * Email verification is required
+     * before accessing LearnX.
+     */
+
+    if (
+      !data.user.email_confirmed_at
+    ) {
+      return res
+        .status(403)
+        .json({
+          error:
+            'Please verify your email before logging in.',
+
+          requires_email_verification:
+            true,
 
           email:
-            profile.email,
+            data.user.email ??
+            email,
 
-          full_name:
-            profile.full_name,
-
-          role:
-            profile.role,
-
-          is_email_verified:
-            profile.is_email_verified === 1,
-
-          onboarding_completed:
-            profile.onboarding_completed === 1,
-
-          total_earned_credits:
-            wallet?.total_earned ?? 0,
-
-          total_spent_credits:
-            wallet?.total_spent ?? 0,
-
-          preferred_language:
-            profile.preferred_language,
-
-          city:
-            profile.city,
-
-          state:
-            profile.state,
-
-          profile_photo:
-            profile.profile_photo,
-
-          bio:
-            profile.bio,
-
-          wallet_balance:
-            wallet?.balance ?? 0,
-
-          availability:
-            availability?.status ??
-            'ACTIVE'
-        },
-
-        token:
-          authData.session.access_token
-      });
-    } catch (err: any) {
-      res.status(500).json({
-        error:
-          err.message ||
-          'Login failed.'
-      });
+          user_id:
+            data.user.id,
+        });
     }
+
+    /*
+     * Fetch the latest LearnX profile
+     * after email verification succeeds.
+     */
+
+    const profile =
+      await getAppProfile(
+        data.user
+      );
+
+    const publicUser = {
+      ...data.user,
+
+      id:
+        data.user.id,
+
+      user_id:
+        data.user.id,
+
+      email_confirmed:
+        Boolean(
+          data.user.email_confirmed_at
+        ),
+
+      role:
+        profile.role,
+
+      wallet_balance:
+        profile.wallet
+          ?.balance ?? 0,
+    };
+
+    return res.json({
+      session:
+        data.session,
+
+      token:
+        data.session
+          .access_token,
+
+      user:
+        publicUser,
+
+      profile:
+        publicProfile(
+          profile
+        ),
+    });
   }
 );
 
-// -------------------------------------------------------------
-// EMAIL VERIFICATION
-// -------------------------------------------------------------
+/* =========================================================
+   EMAIL VERIFICATION
+========================================================= */
 
 apiRouter.post(
   '/auth/verify-email',
-  async (req: Request, res: Response) => {
-    const user =
-      await getAuthenticatedUser(req);
+  async (req, res) => {
+    const {
+      token,
+      user_id,
+      email,
+    } =
+      req.body ?? {};
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
+    /*
+     * Preferred verification:
+     * Supabase token_hash.
+     */
+
+    if (token) {
+      const {
+        data,
+        error,
+      } =
+        await supabaseAnon.auth.verifyOtp(
+          {
+            token_hash:
+              String(token),
+
+            type:
+              'email',
+          }
+        );
+
+      if (error) {
+        return bad(
+          res,
+          error.message,
+          400
+        );
+      }
+
+      if (data.user) {
+        const current = data.user.user_metadata ?? {};
+        await supabaseAdmin.auth.admin.updateUserById(data.user.id, {
+          user_metadata: {
+            ...current,
+            is_email_verified: true,
+          },
+        });
+      }
+
+      return res.json({
+        verified:
+          true,
+
+        user:
+          data.user,
       });
-      return;
     }
 
-    const {
-      user_id,
-      email
-    } = req.body;
+    /*
+     * Without the Supabase verification
+     * token we cannot safely verify an
+     * email just from user_id/email.
+     *
+     * Return a clear error instead of
+     * falsely marking the account verified.
+     */
 
     if (
-      (user_id &&
-        user_id !== user.user_id) ||
-      (email &&
-        email.toLowerCase() !==
-          user.email.toLowerCase())
+      user_id ||
+      email
     ) {
-      res.status(403).json({
-        error:
-          'You can only verify your own account.'
-      });
-      return;
+      return bad(
+        res,
+        'A valid email verification token is required',
+        400
+      );
     }
 
-    db.prepare(`
-      UPDATE profiles
-      SET is_email_verified = 1
-      WHERE user_id = ?
-    `).run(user.user_id);
-
-    res.json({
-      success: true,
-      message:
-        'Email verified successfully.'
-    });
+    return bad(
+      res,
+      'Verification token is required',
+      400
+    );
   }
 );
-
-// -------------------------------------------------------------
-// RESEND VERIFICATION
-// -------------------------------------------------------------
 
 apiRouter.post(
   '/auth/resend-verification',
-  async (req: Request, res: Response) => {
-    const {
-      email
-    } = req.body;
+  async (req, res) => {
+    const email =
+      req.body?.email;
 
     if (!email) {
-      res.status(400).json({
-        error:
-          'Email is required.'
-      });
-      return;
+      return bad(
+        res,
+        'Email is required'
+      );
     }
 
-    try {
-      await supabaseAnon.auth.resend({
-        type: 'signup',
-        email:
-          String(email)
-            .trim()
-            .toLowerCase()
-      });
-    } catch {
-      // Do not expose provider details.
+    const {
+      error,
+    } =
+      await supabaseAdmin.auth.resend(
+        {
+          type: 'signup',
+
+          email:
+            String(
+              email
+            )
+              .trim()
+              .toLowerCase(),
+        }
+      );
+
+    if (error) {
+      return bad(
+        res,
+        error.message
+      );
     }
 
     res.json({
-      success: true,
       message:
-        'Verification link resent to your email address.'
+        'Verification email sent',
     });
   }
 );
 
-// -------------------------------------------------------------
-// CURRENT USER
-// -------------------------------------------------------------
+/* =========================================================
+   CURRENT USER
+========================================================= */
 
 apiRouter.get(
   '/auth/me',
-  async (req: Request, res: Response) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+      user,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error:
-          'This endpoint requires a valid Bearer token'
-      });
-      return;
-    }
-
-    const wallet =
-      db.prepare(`
-        SELECT *
-        FROM time_credit_accounts
-        WHERE user_id = ?
-      `).get(
-        user.user_id
-      ) as any;
-
-    const availability =
-      db.prepare(`
-        SELECT *
-        FROM user_availability
-        WHERE user_id = ?
-      `).get(
-        user.user_id
-      ) as any;
-
-    const learnSkills =
-      db.prepare(`
-        SELECT
-          s.id,
-          s.name,
-          s.category,
-          us.skill_level
-        FROM user_skills us
-        JOIN skills s
-          ON us.skill_id = s.id
-        WHERE
-          us.user_id = ?
-          AND us.skill_type = 'LEARN'
-        ORDER BY s.name ASC
-      `).all(
-        user.user_id
-      );
-
-    const shareSkills =
-      db.prepare(`
-        SELECT
-          s.id,
-          s.name,
-          s.category,
-          us.skill_level
-        FROM user_skills us
-        JOIN skills s
-          ON us.skill_id = s.id
-        WHERE
-          us.user_id = ?
-          AND us.skill_type = 'SHARE'
-        ORDER BY s.name ASC
-      `).all(
-        user.user_id
-      );
-
-    const unreadNotifs =
-      (
-        db.prepare(`
-          SELECT COUNT(*) AS count
-          FROM notifications
-          WHERE
-            user_id = ?
-            AND is_read = 0
-        `).get(
-          user.user_id
-        ) as any
-      )?.count ?? 0;
+    const fresh = await getAppProfile(user);
 
     res.json({
-      user: {
-        ...user,
-
-        is_email_verified:
-          user.is_email_verified === 1,
-
-        onboarding_completed:
-          user.onboarding_completed === 1,
-
-        wallet_balance:
-          wallet?.balance ?? 0,
-
-        total_earned_credits:
-          wallet?.total_earned ?? 0,
-
-        total_spent_credits:
-          wallet?.total_spent ?? 0,
-
-        availability:
-          availability?.status ??
-          'ACTIVE',
-
-        available_from:
-          availability?.available_from ??
-          '18:00:00',
-
-        available_until:
-          availability?.available_until ??
-          '21:00:00',
-
-        learn_skills:
-          learnSkills,
-
-        share_skills:
-          shareSkills,
-
-        unread_notifications_count:
-          unreadNotifs
-      }
+      user,
+      profile:
+        publicProfile(
+          fresh
+        ),
     });
   }
 );
 
-// -------------------------------------------------------------
-// UPDATE PROFILE
-// -------------------------------------------------------------
+/* =========================================================
+   PROFILE
+========================================================= */
 
 apiRouter.put(
   '/profile',
-  async (req: Request, res: Response) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const {
-      full_name,
-      mobile,
-      city,
-      state,
-      preferred_language,
-      education_status,
-      bio,
-      profile_photo
-    } = req.body;
+      profile,
+    } =
+      auth(req);
 
-    db.prepare(`
-      UPDATE profiles
-      SET
-        full_name = COALESCE(?, full_name),
-        mobile = COALESCE(?, mobile),
-        city = COALESCE(?, city),
-        state = COALESCE(?, state),
-        preferred_language =
-          COALESCE(?, preferred_language),
-        education_status =
-          COALESCE(?, education_status),
-        bio = COALESCE(?, bio),
-        profile_photo =
-          COALESCE(?, profile_photo)
-      WHERE user_id = ?
-    `).run(
-      typeof full_name === 'string'
-        ? full_name.trim()
-        : null,
+    const b =
+      req.body ?? {};
 
-      typeof mobile === 'string'
-        ? mobile.trim()
-        : null,
+    const currentUser = await authUser(req);
+    if (!currentUser) return bad(res, 'Authentication required', 401);
 
-      typeof city === 'string'
-        ? city.trim()
-        : null,
-
-      typeof state === 'string'
-        ? state.trim()
-        : null,
-
-      typeof preferred_language === 'string'
-        ? preferred_language
-        : null,
-
-      typeof education_status === 'string'
-        ? education_status
-        : null,
-
-      typeof bio === 'string'
-        ? bio.trim()
-        : null,
-
-      typeof profile_photo === 'string'
-        ? profile_photo.trim()
-        : null,
-
-      user.user_id
-    );
-
-    const updated =
-      db.prepare(`
-        SELECT *
-        FROM profiles
-        WHERE user_id = ?
-      `).get(
-        user.user_id
-      );
-
-    res.json({
-      success: true,
-      user: updated
+    const currentMetadata = currentUser.user_metadata ?? {};
+    await supabaseAdmin.auth.admin.updateUserById(profile.id, {
+      user_metadata: {
+        ...currentMetadata,
+        full_name: b.full_name ?? profile.fullName,
+        age_group: b.age_group ?? profile.ageGroup,
+        city: b.city ?? profile.city,
+        state: b.state ?? profile.state,
+        preferred_language: b.preferred_language ?? profile.preferredLanguage,
+        education_work_status: b.education_work_status ?? profile.educationWorkStatus,
+        profile_photo_url: b.profile_photo_url ?? profile.profilePhotoUrl,
+        bio: b.bio ?? profile.bio,
+      },
     });
+
+    const p = await getAppProfile({
+      ...currentUser,
+      user_metadata: {
+        ...currentMetadata,
+        full_name: b.full_name ?? profile.fullName,
+        age_group: b.age_group ?? profile.ageGroup,
+        city: b.city ?? profile.city,
+        state: b.state ?? profile.state,
+        preferred_language: b.preferred_language ?? profile.preferredLanguage,
+        education_work_status: b.education_work_status ?? profile.educationWorkStatus,
+        profile_photo_url: b.profile_photo_url ?? profile.profilePhotoUrl,
+        bio: b.bio ?? profile.bio,
+      },
+    });
+
+    res.json(publicProfile(p));
   }
 );
-// -------------------------------------------------------------
-// VIEW PUBLIC PROFILE
-// -------------------------------------------------------------
 
-apiRouter.get('/profile/:id', (req: Request, res: Response) => {
-  const profileId = req.params.id;
+apiRouter.get(
+  '/profile/:id',
+  async (req, res) => {
+    const { data, error } = await supabaseAdmin.auth.admin.getUserById(req.params.id);
+    if (error || !data.user) return bad(res, 'Profile not found', 404);
+    const p = await getAppProfile(data.user);
+    return res.json(publicProfile(p));
+  }
+);
 
-  const profile = db.prepare(`
-    SELECT
-      user_id,
-      full_name,
-      email,
-      city,
-      state,
-      preferred_language,
-      education_status,
-      profile_photo,
-      bio,
-      role,
-      created_at
-    FROM profiles
-    WHERE user_id = ?
-  `).get(profileId) as any;
+/* =========================================================
+   SKILL MANAGEMENT
+========================================================= */
 
-  if (!profile) {
-    res.status(404).json({
-      error: 'User profile not found.'
-    });
-    return;
+async function saveSkills(
+  userId: string,
+  items: any[],
+  type: 'LEARN' | 'SHARE',
+  client: any = db
+) {
+  if (!Array.isArray(items)) {
+    return 0;
   }
 
-  // -----------------------------------------------------------
-  // LEARN SKILLS
-  // -----------------------------------------------------------
+  let savedCount = 0;
 
-  const learnSkills = db.prepare(`
-    SELECT
-      s.id,
-      s.name,
-      s.category,
-      s.description,
-      us.skill_level
-    FROM user_skills us
-    JOIN skills s
-      ON us.skill_id = s.id
-    WHERE
-      us.user_id = ?
-      AND us.skill_type = 'LEARN'
-    ORDER BY s.name ASC
-  `).all(profileId);
+  for (const item of items) {
+    const skillId =
+      typeof item === 'string'
+        ? item
+        : (
+            item?.skill_id ??
+            item?.skillId ??
+            item?.id
+          );
 
-  // -----------------------------------------------------------
-  // SHARE SKILLS
-  // -----------------------------------------------------------
-
-  const shareSkills = db.prepare(`
-    SELECT
-      s.id,
-      s.name,
-      s.category,
-      s.description,
-      us.skill_level,
-      us.experience,
-      us.languages_json,
-      us.skill_description,
-      us.beginner_friendly,
-      us.skill_proof
-    FROM user_skills us
-    JOIN skills s
-      ON us.skill_id = s.id
-    WHERE
-      us.user_id = ?
-      AND us.skill_type = 'SHARE'
-    ORDER BY s.name ASC
-  `).all(profileId);
-
-  const trustScore = db.prepare(`
-    SELECT *
-    FROM trust_scores
-    WHERE user_id = ?
-  `).get(profileId) as any;
-
-  const availability = db.prepare(`
-    SELECT *
-    FROM user_availability
-    WHERE user_id = ?
-  `).get(profileId) as any;
-
-  const ratings = db.prepare(`
-    SELECT
-      r.*,
-      p.full_name AS rater_name
-    FROM ratings r
-    JOIN profiles p
-      ON r.rater_id = p.user_id
-    WHERE r.ratee_id = ?
-    ORDER BY r.created_at DESC
-    LIMIT 10
-  `).all(profileId);
-
-  const avgRating = db.prepare(`
-    SELECT
-      AVG(overall_score) AS avg,
-      COUNT(*) AS count
-    FROM ratings
-    WHERE ratee_id = ?
-  `).get(profileId) as any;
-
-  const parsedShareSkills = shareSkills.map(
-    (skill: any) => ({
-      ...skill,
-      languages:
-        (() => {
-          try {
-            return JSON.parse(
-              skill.languages_json || '[]'
-            );
-          } catch {
-            return [];
-          }
-        })()
-    })
-  );
-
-  res.json({
-    profile: {
-      ...profile,
-
-      learn_skills:
-        learnSkills,
-
-      share_skills:
-        parsedShareSkills,
-
-      trust_score:
-        trustScore?.score ?? 85,
-
-      reliability_score:
-        trustScore?.reliability_score ?? 90,
-
-      verification_level:
-        trustScore?.verification_level ??
-        'COMMUNITY_VERIFIED',
-
-      availability_status:
-        availability?.status ??
-        'ACTIVE',
-
-      available_from:
-        availability?.available_from ??
-        '18:00:00',
-
-      available_until:
-        availability?.available_until ??
-        '21:00:00',
-
-      rating_avg:
-        avgRating?.avg != null
-          ? Number(avgRating.avg).toFixed(1)
-          : '0.0',
-
-      rating_count:
-        avgRating?.count ?? 0,
-
-      recent_reviews:
-        ratings
+    if (!skillId) {
+      continue;
     }
-  });
-});
 
-// -------------------------------------------------------------
-// 2. ONBOARDING
-// -------------------------------------------------------------
-//
-// IMPORTANT:
-// Registration role does NOT restrict capabilities.
-//
-// Learner can:
-//   - Learn
-//   - Share
-//   - Learn + Share
-//
-// Knowledge Sharer/Mentor can:
-//   - Learn
-//   - Share
-//   - Learn + Share
-//
-// user_skills is the single source of truth.
-// skill_type = LEARN
-// skill_type = SHARE
-// -------------------------------------------------------------
+    const skill =
+      await client.skill.findFirst({
+        where: {
+          OR: [
+            {
+              id: String(skillId),
+            },
+            {
+              name: {
+                equals: String(skillId),
+                mode: 'insensitive',
+              },
+            },
+          ],
+        },
+      });
+
+    if (!skill) {
+      continue;
+    }
+
+    const skillLevel =
+      enumValue(
+        typeof item === 'object'
+          ? (
+              item.skill_level ??
+              item.level
+            )
+          : undefined,
+        'BEGINNER'
+      );
+
+    await client.userSkill.upsert({
+      where: {
+        userId_skillId_skillType: {
+          userId,
+          skillId: skill.id,
+          skillType: type,
+        },
+      },
+
+      create: {
+        userId,
+        skillId: skill.id,
+        skillType: type as any,
+        skillLevel: skillLevel as any,
+      },
+
+      update: {
+        skillLevel: skillLevel as any,
+        isActive: true,
+      },
+    });
+
+    savedCount++;
+  }
+
+  return savedCount;
+}
+/* =========================================================
+   ONBOARDING
+========================================================= */
 
 apiRouter.post(
   '/onboarding',
-  async (req: Request, res: Response) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const {
-      learn_skills,
-      share_skills,
-      availability,
-      bio,
-      learning_goal,
-      target_skill_level,
-      learning_schedule,
-      learning_interests,
-      preferred_language,
-      mentor_experience,
-      mentor_languages
-    } = req.body;
-
-    // ---------------------------------------------------------
-    // BASIC SKILL ARRAY VALIDATION
-    // ---------------------------------------------------------
-
-    if (
-      !Array.isArray(learn_skills) ||
-      !Array.isArray(share_skills)
-    ) {
-      res.status(400).json({
-        error: 'Invalid skills data.'
-      });
-      return;
-    }
-
-    if (
-      learn_skills.length === 0 &&
-      share_skills.length === 0
-    ) {
-      res.status(400).json({
-        error:
-          'Select at least one skill to learn or share.'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // ALLOWED VALUES
-    // ---------------------------------------------------------
-
-    const validLevels = [
-      'BEGINNER',
-      'ELEMENTARY',
-      'INTERMEDIATE',
-      'ADVANCED'
-    ];
-
-    const allowedLanguages = [
-      'English',
-      'Tamil',
-      'Hindi',
-      'Telugu',
-      'Malayalam',
-      'Kannada',
-      'Other'
-    ];
-
-    // ---------------------------------------------------------
-    // LEARNING VALIDATION
-    // ---------------------------------------------------------
-
-    if (
-      learn_skills.length > 0 &&
-      (
-        typeof learning_goal !== 'string' ||
-        !learning_goal.trim()
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Provide a learning goal when selecting learning skills.'
-      });
-      return;
-    }
-
-    if (
-      target_skill_level &&
-      !validLevels.includes(
-        target_skill_level
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Invalid target skill level.'
-      });
-      return;
-    }
-
-    if (
-      preferred_language &&
-      !allowedLanguages.includes(
-        preferred_language
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Choose a valid preferred language.'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // AVAILABILITY VALIDATION
-    // ---------------------------------------------------------
-
-    if (availability) {
-      if (
-        !['ACTIVE', 'INACTIVE'].includes(
-          availability.status || 'ACTIVE'
-        )
-      ) {
-        res.status(400).json({
-          error:
-            'Availability status must be ACTIVE or INACTIVE.'
-        });
-        return;
-      }
-
-      const timePattern =
-        /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
-
-      if (
-        (
-          availability.available_from &&
-          !timePattern.test(
-            availability.available_from
-          )
-        ) ||
-        (
-          availability.available_until &&
-          !timePattern.test(
-            availability.available_until
-          )
-        )
-      ) {
-        res.status(400).json({
-          error:
-            'Availability times must use HH:MM or HH:MM:SS format.'
-        });
-        return;
-      }
-    }
-
-    // ---------------------------------------------------------
-    // VALIDATE ALL LEARN SKILLS BEFORE DB CHANGES
-    // ---------------------------------------------------------
-
-    for (
-      const learningSkill of learn_skills
-    ) {
-      if (
-        !learningSkill ||
-        typeof learningSkill.skill_id !==
-          'string' ||
-        !learningSkill.skill_id ||
-        !validLevels.includes(
-          learningSkill.level
-        )
-      ) {
-        res.status(400).json({
-          error:
-            'Complete each learning skill with a valid skill and level.'
-        });
-        return;
-      }
-
-      const skillExists =
-        db.prepare(`
-          SELECT id
-          FROM skills
-          WHERE
-            id = ?
-            AND is_active = 1
-        `).get(
-          learningSkill.skill_id
-        );
-
-      if (!skillExists) {
-        res.status(400).json({
-          error:
-            'Selected learning skill does not exist.'
-        });
-        return;
-      }
-    }
-
-    // ---------------------------------------------------------
-    // VALIDATE ALL SHARE SKILLS BEFORE DB CHANGES
-    // ---------------------------------------------------------
-
-    for (
-      const sharingSkill of share_skills
-    ) {
-      if (
-        !sharingSkill ||
-        typeof sharingSkill.skill_id !==
-          'string' ||
-        !sharingSkill.skill_id ||
-        !validLevels.includes(
-          sharingSkill.level
-        )
-      ) {
-        res.status(400).json({
-          error:
-            'Complete each sharing skill with a valid skill and level.'
-        });
-        return;
-      }
-
-      const skillExists =
-        db.prepare(`
-          SELECT id
-          FROM skills
-          WHERE
-            id = ?
-            AND is_active = 1
-        `).get(
-          sharingSkill.skill_id
-        );
-
-      if (!skillExists) {
-        res.status(400).json({
-          error:
-            'Selected sharing skill does not exist.'
-        });
-        return;
-      }
-
-      if (
-        typeof sharingSkill.experience !==
-          'string' ||
-        !sharingSkill.experience.trim()
-      ) {
-        res.status(400).json({
-          error:
-            'Experience is required for each sharing skill.'
-        });
-        return;
-      }
-
-      if (
-        typeof sharingSkill.description !==
-          'string' ||
-        !sharingSkill.description.trim()
-      ) {
-        res.status(400).json({
-          error:
-            'Description is required for each sharing skill.'
-        });
-        return;
-      }
-
-      if (
-        !Array.isArray(
-          sharingSkill.languages
-        ) ||
-        sharingSkill.languages.length === 0 ||
-        sharingSkill.languages.some(
-          (language: any) =>
-            typeof language !== 'string' ||
-            !language.trim()
-        )
-      ) {
-        res.status(400).json({
-          error:
-            'At least one valid language is required for each sharing skill.'
-        });
-        return;
-      }
-
-      const invalidLanguage =
-        sharingSkill.languages.some(
-          (language: string) =>
-            !allowedLanguages.includes(
-              language.trim()
-            )
-        );
-
-      if (invalidLanguage) {
-        res.status(400).json({
-          error:
-            'One or more sharing languages are invalid.'
-        });
-        return;
-      }
-    }
-
-    // ---------------------------------------------------------
-    // NORMALIZE OPTIONAL ARRAYS
-    // ---------------------------------------------------------
-
-    const normalizedInterests =
-      Array.isArray(learning_interests)
-        ? learning_interests
-            .filter(
-              (item: any) =>
-                typeof item === 'string' &&
-                item.trim()
-            )
-            .map(
-              (item: string) =>
-                item.trim()
-            )
-        : typeof learning_interests ===
-            'string'
-          ? learning_interests
-              .split(',')
-              .map(
-                (item: string) =>
-                  item.trim()
-              )
-              .filter(Boolean)
-          : null;
-
-    const normalizedMentorLanguages =
-      Array.isArray(mentor_languages)
-        ? mentor_languages
-            .filter(
-              (item: any) =>
-                typeof item === 'string' &&
-                item.trim()
-            )
-            .map(
-              (item: string) =>
-                item.trim()
-            )
-        : null;
-
-    // ---------------------------------------------------------
-    // TRANSACTION
-    // ---------------------------------------------------------
-
-    try {
-      db.exec(
-        'BEGIN IMMEDIATE'
-      );
-
-      // -------------------------------------------------------
-      // LEARN SKILLS
-      // -------------------------------------------------------
-
-      for (
-        const learningSkill of learn_skills
-      ) {
-        db.prepare(`
-          INSERT INTO user_skills (
-            id,
-            user_id,
-            skill_id,
-            skill_type,
-            skill_level
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            'LEARN',
-            ?
-          )
-          ON CONFLICT(
-            user_id,
-            skill_id,
-            skill_type
-          )
-          DO UPDATE SET
-            skill_level =
-              excluded.skill_level
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          learningSkill.skill_id,
-          learningSkill.level
-        );
-
-        // -----------------------------------------------------
-        // INITIAL LEARNING PROGRESS
-        // -----------------------------------------------------
-
-        db.prepare(`
-          INSERT OR IGNORE INTO learning_progress (
-            id,
-            user_id,
-            skill_id,
-            progress_percentage
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            0
-          )
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          learningSkill.skill_id
-        );
-
-        // -----------------------------------------------------
-        // LEARNING GOAL
-        // -----------------------------------------------------
-
-        const goalText =
-          learning_goal.trim();
-
-        db.prepare(`
-          INSERT INTO learning_goals (
-            id,
-            user_id,
-            skill_id,
-            goal_text,
-            target_level,
-            preferred_schedule
-          )
-          SELECT
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?
-          WHERE NOT EXISTS (
-            SELECT 1
-            FROM learning_goals
-            WHERE
-              user_id = ?
-              AND skill_id = ?
-              AND goal_text = ?
-          )
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          learningSkill.skill_id,
-          goalText,
-          target_skill_level ||
-            'INTERMEDIATE',
-          typeof learning_schedule ===
-            'string'
-            ? learning_schedule.trim()
-            : '',
-          user.user_id,
-          learningSkill.skill_id,
-          goalText
-        );
-      }
-
-      // -------------------------------------------------------
-      // SHARE SKILLS
-      // -------------------------------------------------------
-
-      for (
-        const sharingSkill of share_skills
-      ) {
-        const languages =
-          sharingSkill.languages.map(
-            (language: string) =>
-              language.trim()
-          );
-
-        db.prepare(`
-          INSERT INTO user_skills (
-            id,
-            user_id,
-            skill_id,
-            skill_type,
-            skill_level,
-            experience,
-            languages_json,
-            skill_description,
-            beginner_friendly,
-            skill_proof
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            'SHARE',
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?
-          )
-          ON CONFLICT(
-            user_id,
-            skill_id,
-            skill_type
-          )
-          DO UPDATE SET
-            skill_level =
-              excluded.skill_level,
-            experience =
-              excluded.experience,
-            languages_json =
-              excluded.languages_json,
-            skill_description =
-              excluded.skill_description,
-            beginner_friendly =
-              excluded.beginner_friendly,
-            skill_proof =
-              excluded.skill_proof
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          sharingSkill.skill_id,
-          sharingSkill.level,
-          sharingSkill.experience.trim(),
-          JSON.stringify(languages),
-          sharingSkill.description.trim(),
-          sharingSkill.beginner_friendly
-            ? 1
-            : 0,
-          typeof sharingSkill.skill_proof ===
-            'string'
-            ? sharingSkill.skill_proof.trim()
-            : ''
-        );
-      }
-
-      // -------------------------------------------------------
-      // AVAILABILITY
-      // -------------------------------------------------------
-
-      if (availability) {
-        db.prepare(`
-          INSERT INTO user_availability (
-            id,
-            user_id,
-            status,
-            available_from,
-            available_until,
-            days_of_week
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?
-          )
-          ON CONFLICT(user_id)
-          DO UPDATE SET
-            status =
-              excluded.status,
-            available_from =
-              excluded.available_from,
-            available_until =
-              excluded.available_until,
-            days_of_week =
-              excluded.days_of_week,
-            updated_at =
-              datetime('now')
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          availability.status ||
-            'ACTIVE',
-          availability.available_from ||
-            '18:00:00',
-          availability.available_until ||
-            '21:00:00',
-          Array.isArray(
-            availability.days_of_week
-          )
-            ? JSON.stringify(
-                availability.days_of_week
-              )
-            : null
-        );
-      }
-
-      // -------------------------------------------------------
-      // PROFILE
-      // -------------------------------------------------------
-      //
-      // IMPORTANT:
-      // Do not replace existing values with [] when
-      // optional onboarding fields were not supplied.
-      // -------------------------------------------------------
-
-      db.prepare(`
-        UPDATE profiles
-        SET
-          onboarding_completed = 1,
-
-          bio =
-            COALESCE(
-              ?,
-              bio
-            ),
-
-          learning_goal =
-            COALESCE(
-              ?,
-              learning_goal
-            ),
-
-          target_skill_level =
-            COALESCE(
-              ?,
-              target_skill_level
-            ),
-
-          learning_schedule =
-            COALESCE(
-              ?,
-              learning_schedule
-            ),
-
-          learning_interests_json =
-            COALESCE(
-              ?,
-              learning_interests_json
-            ),
-
-          preferred_language =
-            COALESCE(
-              ?,
-              preferred_language
-            ),
-
-          mentor_experience =
-            COALESCE(
-              ?,
-              mentor_experience
-            ),
-
-          mentor_languages_json =
-            COALESCE(
-              ?,
-              mentor_languages_json
-            ),
-
-          updated_at =
-            datetime('now')
-
-        WHERE user_id = ?
-      `).run(
-        typeof bio === 'string' &&
-          bio.trim()
-          ? bio.trim()
-          : null,
-
-        typeof learning_goal ===
-            'string' &&
-          learning_goal.trim()
-          ? learning_goal.trim()
-          : null,
-
-        target_skill_level ||
-          null,
-
-        typeof learning_schedule ===
-            'string' &&
-          learning_schedule.trim()
-          ? learning_schedule.trim()
-          : null,
-
-        normalizedInterests ===
-          null
-          ? null
-          : JSON.stringify(
-              normalizedInterests
-            ),
-
-        preferred_language ||
-          null,
-
-        typeof mentor_experience ===
-            'string' &&
-          mentor_experience.trim()
-          ? mentor_experience.trim()
-          : null,
-
-        normalizedMentorLanguages ===
-          null
-          ? null
-          : JSON.stringify(
-              normalizedMentorLanguages
-            ),
-
-        user.user_id
-      );
-
-      // -------------------------------------------------------
-      // AUDIT
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT INTO audit_logs (
-          id,
-          actor_id,
-          action,
-          target_type,
-          target_id,
-          details_json
-        )
-        VALUES (
-          ?,
-          ?,
-          'ONBOARDING_COMPLETED',
-          'USER',
-          ?,
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        user.user_id,
-        user.user_id,
-        JSON.stringify({
-          learn_skill_count:
-            learn_skills.length,
-          share_skill_count:
-            share_skills.length
-        })
-      );
-
-      db.exec('COMMIT');
-
-      res.json({
-        success: true,
-        message:
-          'Onboarding completed successfully.'
-      });
-    } catch (err: any) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // Ignore rollback errors.
-      }
-
-      res.status(500).json({
-        error:
-          err?.message ||
-          'Unable to complete onboarding.'
-      });
-    }
-  }
-);
-
-// -------------------------------------------------------------
-// 3. SKILL CATALOG
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/skills',
-  (req: Request, res: Response) => {
-    const {
-      category,
-      search
-    } = req.query;
-
-    let query = `
-      SELECT *
-      FROM skills
-      WHERE is_active = 1
-    `;
-
-    const params: any[] = [];
-
-    // ---------------------------------------------------------
-    // CATEGORY FILTER
-    // ---------------------------------------------------------
-
-    if (
-      category &&
-      category !== 'All'
-    ) {
-      query += `
-        AND category = ?
-      `;
-
-      params.push(
-        category
+      profile,
+    } =
+      auth(req);
+
+    const b =
+      req.body ?? {};
+
+    const currentUser =
+      await authUser(req);
+
+    if (!currentUser) {
+      return bad(
+        res,
+        'Authentication required',
+        401
       );
     }
 
-    // ---------------------------------------------------------
-    // SEARCH FILTER
-    // ---------------------------------------------------------
+    const currentMetadata =
+      currentUser.user_metadata ??
+      {};
 
-    if (search) {
-      query += `
-        AND (
-          name LIKE ?
-          OR description LIKE ?
-        )
-      `;
+    /*
+     * Build sharing-skill details.
+     *
+     * These details are kept in Supabase
+     * user metadata so they are available
+     * without requiring new database columns.
+     */
 
-      params.push(
-        `%${search}%`,
-        `%${search}%`
-      );
-    }
+    const shareSkills =
+      b.share_skills ??
+      b.skills_to_share ??
+      b.skills_you_will_share ??
+      [];
 
-    query += `
-      ORDER BY name ASC
-    `;
-
-    const skills =
-      db.prepare(query)
-        .all(...params);
-
-    // ---------------------------------------------------------
-    // REAL SHARE COUNTS
-    // ---------------------------------------------------------
-
-    const skillsWithCounts =
-      skills.map((skill: any) => {
-        const sharersCount =
-          (
-            db.prepare(`
-              SELECT
-                COUNT(DISTINCT user_id)
-                  AS count
-              FROM user_skills
-              WHERE
-                skill_id = ?
-                AND skill_type = 'SHARE'
-            `).get(
-              skill.id
-            ) as any
-          )?.count ?? 0;
-
-        return {
-          ...skill,
-          sharers_count:
-            sharersCount
-        };
-      });
-
-    res.json({
-      skills:
-        skillsWithCounts
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// GET SINGLE SKILL
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/skills/:id',
-  (req: Request, res: Response) => {
-    const skill =
-      db.prepare(`
-        SELECT *
-        FROM skills
-        WHERE id = ?
-          AND is_active = 1
-      `).get(
-        req.params.id
-      ) as any;
-
-    if (!skill) {
-      res.status(404).json({
-        error: 'Skill not found'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // REAL KNOWLEDGE SHARERS
-    // ---------------------------------------------------------
-    //
-    // IMPORTANT:
-    // Only user_skills.skill_type = SHARE
-    // can appear here.
-    // ---------------------------------------------------------
-
-    const sharers =
-      db.prepare(`
-        SELECT
-          p.user_id,
-          p.full_name,
-          p.profile_photo,
-          p.city,
-          p.state,
-          p.preferred_language,
-
-          us.skill_level,
-          us.experience,
-          us.languages_json,
-          us.skill_description,
-          us.beginner_friendly,
-          us.skill_proof,
-
-          COALESCE(
-            ua.status,
-            'INACTIVE'
-          ) AS availability_status,
-
-          COALESCE(
-            ua.available_from,
-            '18:00:00'
-          ) AS available_from,
-
-          COALESCE(
-            ua.available_until,
-            '21:00:00'
-          ) AS available_until,
-
-          COALESCE(
-            ts.score,
-            85
-          ) AS trust_score,
-
-          COALESCE(
-            ts.reliability_score,
-            90
-          ) AS reliability_score
-
-        FROM user_skills us
-
-        JOIN profiles p
-          ON us.user_id =
-             p.user_id
-
-        LEFT JOIN user_availability ua
-          ON p.user_id =
-             ua.user_id
-
-        LEFT JOIN trust_scores ts
-          ON p.user_id =
-             ts.user_id
-
-        WHERE
-          us.skill_id = ?
-          AND us.skill_type = 'SHARE'
-
-        ORDER BY
-          COALESCE(
-            ua.status,
-            'INACTIVE'
-          ) = 'ACTIVE' DESC,
-
-          COALESCE(
-            ts.score,
-            85
-          ) DESC,
-
-          p.full_name ASC
-      `).all(
-        skill.id
-      );
-
-    const parsedSharers =
-      sharers.map(
-        (sharer: any) => ({
-          ...sharer,
-
-          languages:
-            (() => {
-              try {
-                return JSON.parse(
-                  sharer.languages_json ||
-                    '[]'
-                );
-              } catch {
-                return [];
+    const shareSkillDetails =
+      Array.isArray(shareSkills)
+        ? shareSkills.reduce(
+            (
+              result: Record<string, any>,
+              item: any
+            ) => {
+              if (
+                typeof item !==
+                'object' ||
+                !item
+              ) {
+                return result;
               }
-            })()
-        })
-      );
 
-    // ---------------------------------------------------------
-    // QUIZZES FOR THIS SKILL
-    // ---------------------------------------------------------
+              const skillId =
+                item.skill_id ??
+                item.skillId ??
+                item.id ??
+                item.skill;
 
-    const quizzes =
-      db.prepare(`
-        SELECT *
-        FROM quizzes
-        WHERE skill_id = ?
-          AND (
-            is_active = 1
-            OR is_active IS NULL
+              if (!skillId) {
+                return result;
+              }
+
+              result[String(skillId)] = {
+                skillLevel:
+                  item.skill_level ??
+                  item.level ??
+                  'BEGINNER',
+
+                experience:
+                  item.experience ??
+                  '',
+
+                description:
+                  item.description ??
+                  '',
+
+                teachingLanguages:
+                  Array.isArray(
+                    item.teaching_languages
+                  )
+                    ? item.teaching_languages
+                    : Array.isArray(
+                        item.teachingLanguages
+                      )
+                      ? item.teachingLanguages
+                      : [],
+
+                skillProof:
+                  item.skill_proof ??
+                  item.skillProof ??
+                  null,
+
+                beginnerFriendly:
+                  item.beginner_friendly ??
+                  item.beginnerFriendly ??
+                  true,
+              };
+
+              return result;
+            },
+            {}
           )
-        ORDER BY
-          created_at DESC
-      `).all(
-        skill.id
+        : {};
+
+    /*
+     * Update profile/onboarding metadata.
+     */
+
+    const updatedMetadata = {
+      ...currentMetadata,
+
+      full_name:
+        b.full_name ??
+        profile.fullName,
+
+      age_group:
+        b.age_group ??
+        profile.ageGroup,
+
+      city:
+        b.city ??
+        profile.city,
+
+      state:
+        b.state ??
+        profile.state,
+
+      preferred_language:
+        b.preferred_language ??
+        profile.preferredLanguage,
+
+      education_work_status:
+        b.education_work_status ??
+        profile.educationWorkStatus,
+
+      profile_photo_url:
+        b.profile_photo_url ??
+        profile.profilePhotoUrl,
+
+      bio:
+        b.bio ??
+        profile.bio,
+
+      role:
+        profile.role,
+
+      /*
+       * Learner onboarding information.
+       */
+
+      learning_goal:
+        b.learning_goal ??
+        currentMetadata.learning_goal ??
+        null,
+
+      target_level:
+        b.target_level ??
+        currentMetadata.target_level ??
+        null,
+
+      schedule:
+        b.schedule ??
+        currentMetadata.schedule ??
+        null,
+
+      interests:
+        Array.isArray(b.interests)
+          ? b.interests
+          : Array.isArray(
+              currentMetadata.interests
+            )
+            ? currentMetadata.interests
+            : [],
+
+      /*
+       * Mentor / Knowledge Sharer
+       * onboarding information.
+       */
+
+      teaching_experience:
+        b.teaching_experience ??
+        currentMetadata.teaching_experience ??
+        null,
+
+      teaching_languages:
+        Array.isArray(
+          b.teaching_languages
+        )
+          ? b.teaching_languages
+          : Array.isArray(
+              currentMetadata.teaching_languages
+            )
+            ? currentMetadata.teaching_languages
+            : [],
+
+      share_skill_details:
+        shareSkillDetails,
+
+      /*
+       * Availability sent by the frontend.
+       *
+       * The existing /availability endpoint
+       * can also manage the database availability
+       * record separately.
+       */
+
+      onboarding_availability:
+        b.availability ??
+        b.onboarding_availability ??
+        currentMetadata.onboarding_availability ??
+        null,
+
+      onboarding_completed:
+        true,
+
+      is_active:
+        true,
+    };
+
+    /*
+     * Save updated profile information.
+     */
+
+    await supabaseAdmin.auth.admin.updateUserById(
+      profile.id,
+      {
+        user_metadata:
+          updatedMetadata,
+      }
+    );
+
+    /*
+     * Learner skills.
+     */
+
+    await saveSkills(
+      profile.id,
+      b.learn_skills ??
+        b.learning_skills ??
+        [],
+      'LEARN'
+    );
+
+    /*
+     * Mentor / Knowledge Sharer skills.
+     */
+
+    if (
+      profile.role ===
+      'KNOWLEDGE_SHARER'
+    ) {
+      await saveSkills(
+        profile.id,
+        shareSkills,
+        'SHARE'
+      );
+    }
+
+    /*
+     * Fetch the latest profile after
+     * all onboarding information is saved.
+     */
+
+    const freshUser =
+      await supabaseAdmin.auth.admin.getUserById(
+        profile.id
       );
 
-    res.json({
-      skill,
+    const fresh =
+      await getAppProfile(
+        freshUser.data.user ??
+          {
+            ...currentUser,
+            user_metadata:
+              updatedMetadata,
+          }
+      );
 
-      sharers:
-        parsedSharers,
-
-      sharers_count:
-        parsedSharers.length,
-
-      quizzes
-    });
+    return res.json(
+      publicProfile(
+        fresh
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// NATURAL LANGUAGE SEARCH
-// -------------------------------------------------------------
+/* =========================================================
+   SEARCH AND MATCHING
+========================================================= */
 
 apiRouter.post(
   '/search/nl',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    const currentUserId =
-      user
-        ? user.user_id
-        : 'anonymous';
-
-    const {
-      query
-    } = req.body;
-
-    if (
-      !query ||
-      typeof query !== 'string' ||
-      !query.trim()
-    ) {
-      res.status(400).json({
-        error:
-          'Search query is required'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const parsed =
       await parseNaturalLanguageSearch(
-        query.trim()
+        String(
+          req.body?.query ??
+            ''
+        )
       );
 
-    const matches =
-      computeMatches({
-        learner_id:
-          currentUserId,
-
-        skill_name:
-          parsed.skill_name,
-
-        level:
-          parsed.level,
-
-        language:
-          parsed.language,
-
-        time:
-          parsed.preferred_time
-      });
-
-    res.json({
-      parsed_parameters:
-        parsed,
-
-      total_results:
-        matches.length,
-
-      results:
-        matches
-    });
+    res.json(parsed);
   }
 );
-
-// -------------------------------------------------------------
-// AI MATCHING RECOMMENDATIONS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/matching',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
+
+    const rows =
+      await computeMatches(
+        {
+          learner_id:
+            profile.id,
+
+          skill_id:
+            req.query.skill_id as
+              | string
+              | undefined,
+
+          skill_name:
+            req.query.skill_name as
+              | string
+              | undefined,
+
+          level:
+            req.query.level as
+              | string
+              | undefined,
+
+          language:
+            req.query.language as
+              | string
+              | undefined,
+
+          time:
+            req.query.time as
+              | string
+              | undefined,
+        }
       );
 
-    const currentUserId =
-      user
-        ? user.user_id
-        : 'anonymous';
-
-    const {
-      skill_id,
-      skill_name,
-      level,
-      language,
-      time
-    } = req.query;
-
-    const matches =
-      computeMatches({
-        learner_id:
-          currentUserId,
-
-        skill_id:
-          skill_id as string,
-
-        skill_name:
-          skill_name as string,
-
-        level:
-          level as string,
-
-        language:
-          language as string,
-
-        time:
-          time as string
-      });
-
-    res.json({
-      total:
-        matches.length,
-
-      matches
-    });
+    res.json(rows);
   }
 );
 
-// -------------------------------------------------------------
-// AVAILABILITY
-// -------------------------------------------------------------
+/* =========================================================
+   AVAILABILITY
+========================================================= */
 
 apiRouter.get(
   '/availability',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
     const availability =
-      db.prepare(`
-        SELECT *
-        FROM user_availability
-        WHERE user_id = ?
-      `).get(
-        user.user_id
-      );
+      await db.userAvailability.findUnique({
+        where: {
+          userId:
+            profile.id,
+        },
+      });
 
-    res.json({
-      availability:
-        availability || {
-          status: 'ACTIVE',
-          available_from:
-            '18:00:00',
-          available_until:
-            '21:00:00'
-        }
-    });
+    return res.json(
+      availability
+    );
   }
 );
-
-// -------------------------------------------------------------
-// UPDATE AVAILABILITY
-// -------------------------------------------------------------
 
 apiRouter.post(
   '/availability',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const {
-      status,
-      available_from,
-      available_until,
-      days_of_week
-    } = req.body;
+      profile,
+    } =
+      auth(req);
 
-    // IN_CLASS must never be manually assigned.
-    if (
-      !status ||
-      !['ACTIVE', 'INACTIVE'].includes(
-        status
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Status must be ACTIVE or INACTIVE. IN_CLASS is controlled by the session lifecycle.'
-      });
-      return;
-    }
+    const b =
+      req.body ?? {};
 
-    const timePattern =
-      /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
-
-    if (
-      available_from &&
-      !timePattern.test(
-        available_from
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Invalid available_from time.'
-      });
-      return;
-    }
-
-    if (
-      available_until &&
-      !timePattern.test(
-        available_until
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Invalid available_until time.'
-      });
-      return;
-    }
-
-    const normalizedDays =
-      Array.isArray(days_of_week)
-        ? JSON.stringify(
-            days_of_week
-          )
-        : null;
-
-    db.prepare(`
-      INSERT INTO user_availability (
-        id,
-        user_id,
-        status,
-        available_from,
-        available_until,
-        days_of_week
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?
-      )
-      ON CONFLICT(user_id)
-      DO UPDATE SET
-        status =
-          excluded.status,
-        available_from =
-          excluded.available_from,
-        available_until =
-          excluded.available_until,
-        days_of_week =
-          COALESCE(
-            excluded.days_of_week,
-            user_availability.days_of_week
-          ),
-        updated_at =
-          datetime('now')
-    `).run(
-      crypto.randomUUID(),
-      user.user_id,
-      status,
-      available_from ||
-        '18:00:00',
-      available_until ||
-        '21:00:00',
-      normalizedDays
-    );
-
-    const updated =
-      db.prepare(`
-        SELECT *
-        FROM user_availability
-        WHERE user_id = ?
-      `).get(
-        user.user_id
+    const status =
+      enumValue(
+        b.status,
+        'INACTIVE'
       );
 
-    broadcastEvent(
-      'availability_updated',
-      {
-        user_id:
-          user.user_id,
+    const availability =
+      await db.userAvailability.upsert({
+        where: {
+          userId:
+            profile.id,
+        },
 
-        availability:
-          updated
-      }
+        create: {
+          userId:
+            profile.id,
+
+          status:
+            status as any,
+
+          availableFrom:
+            isoDate(
+              b.available_from
+            ),
+
+          availableUntil:
+            isoDate(
+              b.available_until
+            ),
+
+          timezone:
+            b.timezone ??
+            'Asia/Kolkata',
+        },
+
+        update: {
+          status:
+            status as any,
+
+          availableFrom:
+            isoDate(
+              b.available_from
+            ),
+
+          availableUntil:
+            isoDate(
+              b.available_until
+            ),
+
+          timezone:
+            b.timezone ??
+            'Asia/Kolkata',
+        },
+      });
+
+    return res.json(
+      availability
     );
-
-    res.json({
-      success: true,
-      availability:
-        updated
-    });
   }
 );
-// -------------------------------------------------------------
-// 4. SESSION HELPERS
-// -------------------------------------------------------------
 
-function parseTimeToSeconds(
-  value: string
-): number {
-  const parts = value.split(':').map(Number);
-
-  if (parts.length < 2) {
-    return 0;
-  }
-
-  const hours = parts[0] || 0;
-  const minutes = parts[1] || 0;
-  const seconds = parts[2] || 0;
-
-  return (
-    hours * 3600 +
-    minutes * 60 +
-    seconds
-  );
-}
-
-function calculateSessionEndTime(
-  startTime: string,
-  durationMinutes: number
-): string {
-  const startSeconds =
-    parseTimeToSeconds(startTime);
-
-  const endSeconds =
-    startSeconds +
-    durationMinutes * 60;
-
-  const normalized =
-    endSeconds % (24 * 3600);
-
-  const hours =
-    Math.floor(
-      normalized / 3600
-    );
-
-  const minutes =
-    Math.floor(
-      (normalized % 3600) / 60
-    );
-
-  const seconds =
-    normalized % 60;
-
-  return [
-    String(hours).padStart(2, '0'),
-    String(minutes).padStart(2, '0'),
-    String(seconds).padStart(2, '0')
-  ].join(':');
-}
-
-function intervalsOverlap(
-  startA: string,
-  endA: string,
-  startB: string,
-  endB: string
-): boolean {
-  const aStart =
-    parseTimeToSeconds(startA);
-
-  const aEnd =
-    parseTimeToSeconds(endA);
-
-  const bStart =
-    parseTimeToSeconds(startB);
-
-  const bEnd =
-    parseTimeToSeconds(endB);
-
-  return (
-    aStart < bEnd &&
-    bStart < aEnd
-  );
-}
-
-// -------------------------------------------------------------
-// CHECK IF USER IS BLOCKED
-// -------------------------------------------------------------
-
-function areUsersBlocked(
-  userA: string,
-  userB: string
-): boolean {
-  const blocked =
-    db.prepare(`
-      SELECT id
-      FROM blocks
-      WHERE
-        (
-          blocker_id = ?
-          AND blocked_id = ?
-        )
-        OR
-        (
-          blocker_id = ?
-          AND blocked_id = ?
-        )
-      LIMIT 1
-    `).get(
-      userA,
-      userB,
-      userB,
-      userA
-    );
-
-  return Boolean(blocked);
-}
-
-// -------------------------------------------------------------
-// SESSION PARTICIPANT CHECK
-// -------------------------------------------------------------
-
-function isSessionParticipant(
-  session: any,
-  userId: string
-): boolean {
-  return (
-    session.learner_id === userId ||
-    session.knowledge_sharer_id === userId
-  );
-}
-
-// -------------------------------------------------------------
-// GET SESSION
-// -------------------------------------------------------------
-
-function getSessionById(
-  sessionId: string
-) {
-  return db.prepare(`
-    SELECT *
-    FROM sessions
-    WHERE id = ?
-  `).get(sessionId) as any;
-}
-
-// -------------------------------------------------------------
-// SESSION DURATION
-// -------------------------------------------------------------
-
-function getVerifiedDurationSeconds(
-  session: any
-): number {
-  if (
-    !session.started_at ||
-    !session.ended_at
-  ) {
-    return 0;
-  }
-
-  const start =
-    new Date(
-      session.started_at
-    ).getTime();
-
-  const end =
-    new Date(
-      session.ended_at
-    ).getTime();
-
-  if (
-    !Number.isFinite(start) ||
-    !Number.isFinite(end) ||
-    end <= start
-  ) {
-    return 0;
-  }
-
-  return Math.floor(
-    (end - start) / 1000
-  );
-}
-
-// -------------------------------------------------------------
-// 5. CREATE SESSION REQUEST
-// -------------------------------------------------------------
+/* =========================================================
+   SESSION REQUESTS
+========================================================= */
 
 apiRouter.post(
   '/sessions/request',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const {
-      knowledge_sharer_id,
-      skill_id,
-      session_date,
-      start_time,
-      duration_minutes,
-      learning_goal
-    } = req.body;
+      profile,
+    } = auth(req);
 
     if (
-      !knowledge_sharer_id ||
-      !skill_id ||
-      !session_date ||
-      !start_time ||
-      !learning_goal
+      profile.role !==
+      'LEARNER'
     ) {
-      res.status(400).json({
-        error:
-          'Knowledge sharer, skill, date, start time and learning goal are required.'
-      });
-      return;
-    }
-
-    const duration =
-      Number(
-        duration_minutes || 60
+      return bad(
+        res,
+        'Only learners can create session requests.'
       );
-
-    if (
-      !Number.isFinite(duration) ||
-      duration <= 0 ||
-      duration > 480
-    ) {
-      res.status(400).json({
-        error:
-          'Session duration must be between 1 and 480 minutes.'
-      });
-      return;
     }
 
-    // ---------------------------------------------------------
-    // PREVENT SELF BOOKING
-    // ---------------------------------------------------------
+    const b =
+      req.body ?? {};
 
-    if (
-      user.user_id ===
-      knowledge_sharer_id
-    ) {
-      res.status(400).json({
-        error:
-          'You cannot book a session with yourself.'
-      });
-      return;
-    }
+    const knowledgeSharerId =
+      String(
+        b.knowledge_sharer_id ??
+        ''
+      ).trim();
 
-    // ---------------------------------------------------------
-    // CHECK TARGET USER
-    // ---------------------------------------------------------
+    const skillId =
+      String(
+        b.skill_id ??
+        ''
+      ).trim();
 
-    const sharer =
-      db.prepare(`
-        SELECT *
-        FROM profiles
-        WHERE user_id = ?
-      `).get(
-        knowledge_sharer_id
-      ) as any;
+    const sessionDate =
+      String(
+        b.session_date ??
+        ''
+      ).trim();
 
-    if (!sharer) {
-      res.status(404).json({
-        error:
-          'Knowledge sharer not found.'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // BLOCK CHECK
-    // ---------------------------------------------------------
-
-    if (
-      areUsersBlocked(
-        user.user_id,
-        knowledge_sharer_id
-      )
-    ) {
-      res.status(403).json({
-        error:
-          'You cannot create a session with this user.'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // SKILL CHECK
-    // ---------------------------------------------------------
-    //
-    // The selected person MUST actually share
-    // the selected skill.
-    // ---------------------------------------------------------
-
-    const sharedSkill =
-      db.prepare(`
-        SELECT
-          us.*,
-          s.name AS skill_name
-        FROM user_skills us
-        JOIN skills s
-          ON us.skill_id = s.id
-        WHERE
-          us.user_id = ?
-          AND us.skill_id = ?
-          AND us.skill_type = 'SHARE'
-        LIMIT 1
-      `).get(
-        knowledge_sharer_id,
-        skill_id
-      ) as any;
-
-    if (!sharedSkill) {
-      res.status(400).json({
-        error:
-          'This user does not share the selected skill.'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // SKILL EXISTS
-    // ---------------------------------------------------------
-
-    const skill =
-      db.prepare(`
-        SELECT *
-        FROM skills
-        WHERE
-          id = ?
-          AND is_active = 1
-      `).get(
-        skill_id
-      ) as any;
-
-    if (!skill) {
-      res.status(404).json({
-        error:
-          'Skill not found.'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // DATE VALIDATION
-    // ---------------------------------------------------------
-
-    const datePattern =
-      /^\d{4}-\d{2}-\d{2}$/;
-
-    const timePattern =
-      /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
-
-    if (
-      !datePattern.test(
-        String(session_date)
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Session date must use YYYY-MM-DD format.'
-      });
-      return;
-    }
-
-    if (
-      !timePattern.test(
-        String(start_time)
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Start time must use HH:MM or HH:MM:SS format.'
-      });
-      return;
-    }
-
-    const normalizedStartTime =
-      String(start_time).length === 5
-        ? `${start_time}:00`
-        : String(start_time);
+    const startTime =
+      String(
+        b.start_time ??
+        ''
+      ).trim();
 
     const endTime =
-      calculateSessionEndTime(
-        normalizedStartTime,
-        duration
+      String(
+        b.end_time ??
+        ''
+      ).trim();
+
+    const learningGoal =
+      String(
+        b.learning_goal ??
+        ''
+      ).trim();
+
+    if (!knowledgeSharerId) {
+      return bad(
+        res,
+        'knowledge_sharer_id is required'
+      );
+    }
+
+    if (!skillId) {
+      return bad(
+        res,
+        'skill_id is required'
+      );
+    }
+
+    if (!sessionDate) {
+      return bad(
+        res,
+        'session_date is required'
+      );
+    }
+
+    if (!startTime) {
+      return bad(
+        res,
+        'start_time is required'
+      );
+    }
+
+    if (!endTime) {
+      return bad(
+        res,
+        'end_time is required'
+      );
+    }
+
+    if (!learningGoal) {
+      return bad(
+        res,
+        'learning_goal is required'
+      );
+    }
+
+    const skill =
+      await db.skill.findFirst({
+        where: {
+          id:
+            skillId,
+
+          isActive:
+            true,
+        },
+      });
+
+    if (!skill) {
+      return bad(
+        res,
+        'Skill not found',
+        404
+      );
+    }
+
+    const sharerUser =
+      await supabaseAdmin.auth.admin.getUserById(
+        knowledgeSharerId
       );
 
-    // ---------------------------------------------------------
-    // CHECK DUPLICATE / OVERLAPPING SESSION
-    // ---------------------------------------------------------
+    if (
+      sharerUser.error ||
+      !sharerUser.data.user
+    ) {
+      return bad(
+        res,
+        'Knowledge sharer not found.',
+        404
+      );
+    }
 
-    const existingSessions =
-      db.prepare(`
-        SELECT
-          *
-        FROM sessions
-        WHERE
-          session_date = ?
-          AND status IN (
-            'REQUESTED',
-            'ACCEPTED',
-            'IN_PROGRESS'
-          )
-          AND (
-            learner_id IN (?, ?)
-            OR knowledge_sharer_id IN (?, ?)
-          )
-      `).all(
-        session_date,
-        user.user_id,
-        knowledge_sharer_id,
-        user.user_id,
-        knowledge_sharer_id
-      ) as any[];
+    const sharerRole =
+      sharerUser.data.user
+        .user_metadata?.role;
 
-    const overlapping =
-      existingSessions.find(
-        (existing: any) => {
-          const existingStart =
-            existing.start_time;
+    if (
+      sharerRole !==
+        'KNOWLEDGE_SHARER' &&
+      sharerRole !==
+        'MENTOR'
+    ) {
+      return bad(
+        res,
+        'Selected user is not a knowledge sharer.',
+        400
+      );
+    }
 
-          const existingDuration =
-            Number(
-              existing.duration_minutes ||
-              60
-            );
+    const sharedSkill =
+      await db.userSkill.findFirst({
+        where: {
+          userId:
+            knowledgeSharerId,
 
-          const existingEnd =
-            calculateSessionEndTime(
-              existingStart,
-              existingDuration
-            );
+          skillId:
+            skill.id,
 
-          return intervalsOverlap(
-            normalizedStartTime,
-            endTime,
-            existingStart,
-            existingEnd
-          );
+          skillType:
+            'SHARE' as any,
+
+          isActive:
+            true,
+        },
+      });
+
+    if (!sharedSkill) {
+      return bad(
+        res,
+        'This knowledge sharer does not share the selected skill.',
+        400
+      );
+    }
+
+    const scheduledStart =
+      new Date(
+        `${sessionDate}T${startTime}`
+      );
+
+    const scheduledEnd =
+      new Date(
+        `${sessionDate}T${endTime}`
+      );
+
+    if (
+      Number.isNaN(
+        scheduledStart.getTime()
+      ) ||
+      Number.isNaN(
+        scheduledEnd.getTime()
+      )
+    ) {
+      return bad(
+        res,
+        'Invalid session date or time.'
+      );
+    }
+
+    /*
+     * If the session crosses midnight,
+     * move the end time to the next day.
+     */
+    if (
+      scheduledEnd <=
+      scheduledStart
+    ) {
+      scheduledEnd.setDate(
+        scheduledEnd.getDate() +
+          1
+      );
+    }
+
+    const conflict =
+      await db.session.findFirst({
+        where: {
+          knowledgeSharerId,
+          status: {
+            in: [
+              'REQUESTED',
+              'ACCEPTED',
+              'SCHEDULED',
+              'IN_PROGRESS',
+            ],
+          },
+          scheduledStart: {
+            lt:
+              scheduledEnd,
+          },
+          scheduledEnd: {
+            gt:
+              scheduledStart,
+          },
+        },
+      });
+
+    if (conflict) {
+      return bad(
+        res,
+        'The selected knowledge sharer already has a session during this time.',
+        409
+      );
+    }
+
+    const existingLearnerSession =
+      await db.session.findFirst({
+        where: {
+          learnerId:
+            profile.id,
+
+          status: {
+            in: [
+              'REQUESTED',
+              'ACCEPTED',
+              'SCHEDULED',
+              'IN_PROGRESS',
+            ],
+          },
+
+          scheduledStart: {
+            lt:
+              scheduledEnd,
+          },
+
+          scheduledEnd: {
+            gt:
+              scheduledStart,
+          },
+        },
+      });
+
+    if (existingLearnerSession) {
+      return bad(
+        res,
+        'You already have another session during this time.',
+        409
+      );
+    }
+
+    const result =
+      await db.$transaction(
+        async (tx) => {
+          const learningRequest =
+            await tx.learningRequest.create({
+              data: {
+                learnerId:
+                  profile.id,
+
+                skillId:
+                  skill.id,
+
+                skillLevel:
+                  enumValue(
+                    b.skill_level,
+                    'BEGINNER'
+                  ) as any,
+
+                preferredLanguage:
+                  b.preferred_language ??
+                  profile.preferredLanguage,
+
+                learningGoal,
+
+                preferredDate:
+                  new Date(
+                    `${sessionDate}T00:00:00`
+                  ),
+
+                preferredStartTime:
+                  scheduledStart,
+
+                preferredEndTime:
+                  scheduledEnd,
+
+                status:
+                  'OPEN',
+              },
+            });
+
+          const match =
+            await tx.match.create({
+              data: {
+                learningRequestId:
+                  learningRequest.id,
+
+                learnerId:
+                  profile.id,
+
+                knowledgeSharerId,
+
+                skillId:
+                  skill.id,
+
+                matchScore:
+                  100,
+
+                skillMatchScore:
+                  100,
+
+                levelMatchScore:
+                  100,
+
+                languageMatchScore:
+                  100,
+
+                availabilityMatchScore:
+                  100,
+
+                status:
+                  'ACCEPTED',
+              },
+            });
+
+          const session =
+            await tx.session.create({
+              data: {
+                learningRequestId:
+                  learningRequest.id,
+
+                matchId:
+                  match.id,
+
+                learnerId:
+                  profile.id,
+
+                knowledgeSharerId,
+
+                skillId:
+                  skill.id,
+
+                scheduledStart,
+
+                scheduledEnd,
+
+                status:
+                  'REQUESTED',
+
+                learnerConfirmed:
+                  false,
+
+                knowledgeSharerConfirmed:
+                  false,
+
+                sessionGoal:
+                  learningGoal,
+
+                meetingRoomId:
+                  `learnx-session-${crypto.randomUUID()}`,
+              },
+            });
+
+          return {
+            learningRequest,
+            match,
+            session,
+          };
         }
       );
 
-    if (overlapping) {
-      res.status(409).json({
-        error:
-          'This time overlaps with an existing session for one of the participants.'
+    return res
+      .status(201)
+      .json({
+        success:
+          true,
+
+        message:
+          'Session request sent successfully!',
+
+        learning_request:
+          result.learningRequest,
+
+        match:
+          result.match,
+
+        session:
+          result.session,
       });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // SESSION CREATION
-    // ---------------------------------------------------------
-
-    const sessionId =
-      crypto.randomUUID();
-
-    const roomId =
-      `learnx-session-${sessionId}`;
-
-    const createdAt =
-      new Date().toISOString();
-
-    try {
-      db.exec(
-        'BEGIN IMMEDIATE'
-      );
-
-      db.prepare(`
-        INSERT INTO sessions (
-          id,
-          learner_id,
-          knowledge_sharer_id,
-          skill_id,
-          session_date,
-          start_time,
-          duration_minutes,
-          learning_goal,
-          status,
-          session_stage,
-          room_id,
-          meeting_provider,
-          learner_confirmed,
-          sharer_confirmed,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          'REQUESTED',
-          'REQUESTED',
-          ?,
-          'BUILTIN',
-          0,
-          0,
-          ?,
-          ?
-        )
-      `).run(
-        sessionId,
-        user.user_id,
-        knowledge_sharer_id,
-        skill_id,
-        session_date,
-        normalizedStartTime,
-        duration,
-        String(
-          learning_goal
-        ).trim(),
-        roomId,
-        createdAt,
-        createdAt
-      );
-
-      db.prepare(`
-        INSERT INTO notifications (
-          id,
-          user_id,
-          title,
-          message,
-          type,
-          link
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          'SESSION_REQUEST',
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        knowledge_sharer_id,
-        'New Session Request',
-        `${user.full_name} requested a ${skill.name} learning session.`,
-        `/sessions/${sessionId}`
-      );
-
-      db.exec('COMMIT');
-    } catch (err: any) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // Ignore.
-      }
-
-      res.status(500).json({
-        error:
-          err.message ||
-          'Unable to create session.'
-      });
-      return;
-    }
-
-    broadcastEvent(
-      'session_requested',
-      {
-        session_id:
-          sessionId,
-
-        learner_id:
-          user.user_id,
-
-        knowledge_sharer_id,
-
-        skill_id,
-
-        session_date,
-
-        start_time:
-          normalizedStartTime
-      }
-    );
-
-    res.status(201).json({
-      success: true,
-
-      session_id:
-        sessionId,
-
-      room_id:
-        roomId,
-
-      meeting_provider:
-        'BUILTIN',
-
-      status:
-        'REQUESTED'
-    });
   }
 );
-
-// -------------------------------------------------------------
-// GET MY SESSIONS
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/sessions',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const {
-      status,
-      role
-    } = req.query;
-
-    let query = `
-      SELECT
-        s.*,
-
-        learner.full_name
-          AS learner_name,
-
-        sharer.full_name
-          AS sharer_name,
-
-        sk.name
-          AS skill_name
-
-      FROM sessions s
-
-      JOIN profiles learner
-        ON learner.user_id =
-           s.learner_id
-
-      JOIN profiles sharer
-        ON sharer.user_id =
-           s.knowledge_sharer_id
-
-      JOIN skills sk
-        ON sk.id =
-           s.skill_id
-
-      WHERE
-        (
-          s.learner_id = ?
-          OR
-          s.knowledge_sharer_id = ?
-        )
-    `;
-
-    const params: any[] = [
-      user.user_id,
-      user.user_id
-    ];
-
-    if (
-      typeof status === 'string' &&
-      status.trim()
-    ) {
-      query += `
-        AND s.status = ?
-      `;
-
-      params.push(
-        status.trim()
-      );
-    }
-
-    if (role === 'learner') {
-      query += `
-        AND s.learner_id = ?
-      `;
-
-      params.push(
-        user.user_id
-      );
-    }
-
-    if (
-      role === 'sharer' ||
-      role === 'mentor'
-    ) {
-      query += `
-        AND s.knowledge_sharer_id = ?
-      `;
-
-      params.push(
-        user.user_id
-      );
-    }
-
-    query += `
-      ORDER BY
-        s.session_date DESC,
-        s.start_time DESC,
-        s.created_at DESC
-    `;
-
-    const sessions =
-      db.prepare(query)
-        .all(...params);
-
-    res.json({
-      sessions
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// GET SINGLE SESSION
-// -------------------------------------------------------------
-
 apiRouter.get(
   '/sessions/:id',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
 
     const session =
-      db.prepare(`
-        SELECT
-          s.*,
-
-          learner.full_name
-            AS learner_name,
-
-          learner.profile_photo
-            AS learner_photo,
-
-          sharer.full_name
-            AS sharer_name,
-
-          sharer.profile_photo
-            AS sharer_photo,
-
-          sk.name
-            AS skill_name,
-
-          sk.category
-            AS skill_category
-
-        FROM sessions s
-
-        JOIN profiles learner
-          ON learner.user_id =
-             s.learner_id
-
-        JOIN profiles sharer
-          ON sharer.user_id =
-             s.knowledge_sharer_id
-
-        JOIN skills sk
-          ON sk.id =
-             s.skill_id
-
-        WHERE s.id = ?
-      `).get(
-        req.params.id
-      ) as any;
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+        include: {
+          skill: true,
+        },
+      });
 
     if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
+      return bad(
+        res,
+        'Session not found.',
+        404
+      );
     }
 
     if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
+      session.learnerId !==
+        profile.id &&
+      session.knowledgeSharerId !==
+        profile.id
     ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
+      );
     }
 
-    res.json({
-      session
+    const learnerUser =
+      await supabaseAdmin.auth.admin.getUserById(
+        session.learnerId
+      );
+
+    const sharerUser =
+      await supabaseAdmin.auth.admin.getUserById(
+        session.knowledgeSharerId
+      );
+
+    const learnerMetadata =
+      learnerUser.data.user?.user_metadata ?? {};
+
+    const sharerMetadata =
+      sharerUser.data.user?.user_metadata ?? {};
+
+    const sessionStart =
+      session.scheduledStart.toISOString();
+
+    const sessionEnd =
+      session.scheduledEnd.toISOString();
+
+    const sessionRecord = {
+      id:
+        session.id,
+
+      learner_id:
+        session.learnerId,
+
+      knowledge_sharer_id:
+        session.knowledgeSharerId,
+
+      skill_id:
+        session.skillId,
+
+      skill_name:
+        session.skill?.name ?? '',
+
+      skill_category:
+        session.skill?.category ?? null,
+
+      learner_name:
+        learnerMetadata.full_name ??
+        learnerUser.data.user?.email ??
+        'Learner',
+
+      learner_email:
+        learnerUser.data.user?.email ??
+        null,
+
+      learner_photo:
+        learnerMetadata.profile_photo_url ??
+        null,
+
+      sharer_name:
+        sharerMetadata.full_name ??
+        sharerUser.data.user?.email ??
+        'Knowledge Sharer',
+
+      sharer_email:
+        sharerUser.data.user?.email ??
+        null,
+
+      sharer_photo:
+        sharerMetadata.profile_photo_url ??
+        null,
+
+      session_date:
+        session.scheduledStart
+          .toISOString()
+          .slice(0, 10),
+
+      start_time:
+        session.scheduledStart
+          .toTimeString()
+          .slice(0, 5),
+
+      end_time:
+        session.scheduledEnd
+          .toTimeString()
+          .slice(0, 5),
+
+      duration_minutes:
+        Math.max(
+          0,
+          Math.round(
+            (
+              session.scheduledEnd.getTime() -
+              session.scheduledStart.getTime()
+            ) /
+              60000
+          )
+        ),
+
+      status:
+        session.status,
+
+      learning_goal:
+        session.sessionGoal ??
+        '',
+
+      room_id:
+        session.meetingRoomId,
+
+      learner_confirmed:
+        session.learnerConfirmed,
+
+      sharer_confirmed:
+        session.knowledgeSharerConfirmed,
+
+      credit_awarded:
+        0,
+
+      session_stage:
+        session.status ===
+        'COMPLETED'
+          ? 'VERIFIED'
+          : session.status,
+
+      started_at:
+        session.status ===
+        'IN_PROGRESS'
+          ? sessionStart
+          : null,
+
+      ended_at:
+        session.status ===
+        'COMPLETED'
+          ? sessionEnd
+          : null,
+
+      duration_seconds:
+        session.status ===
+        'COMPLETED'
+          ? Math.max(
+              0,
+              Math.floor(
+                (
+                  session.scheduledEnd.getTime() -
+                  session.scheduledStart.getTime()
+                ) /
+                  1000
+              )
+            )
+          : null,
+
+      verified_credits:
+        null,
+
+      verified_at:
+        null,
+
+      created_at:
+        session.createdAt,
+
+      updated_at:
+        session.updatedAt,
+    };
+
+    return res.json({
+      session:
+        sessionRecord,
     });
   }
 );
+apiRouter.post(
+  '/sessions/:id/join',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
 
-// -------------------------------------------------------------
-// ACCEPT SESSION
-// -------------------------------------------------------------
+    const session =
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
 
+    if (!session) {
+      return bad(
+        res,
+        'Session not found.',
+        404
+      );
+    }
+
+    if (
+      session.learnerId !==
+        profile.id &&
+      session.knowledgeSharerId !==
+        profile.id
+    ) {
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
+      );
+    }
+
+    if (
+      session.status !==
+        'ACCEPTED' &&
+      session.status !==
+        'IN_PROGRESS'
+    ) {
+      return bad(
+        res,
+        'This session is not available to join.',
+        409
+      );
+    }
+
+    if (!session.meetingRoomId) {
+      return bad(
+        res,
+        'LiveKit room is not configured for this session.',
+        409
+      );
+    }
+
+    const now =
+      new Date();
+
+    if (
+      now.getTime() <
+      session.scheduledStart.getTime()
+    ) {
+      return bad(
+        res,
+        'The session cannot be joined before its scheduled start time.',
+        409
+      );
+    }
+
+    let updated =
+      session;
+
+    if (
+      session.status ===
+      'ACCEPTED'
+    ) {
+      updated =
+        await db.session.update({
+          where: {
+            id:
+              session.id,
+          },
+          data: {
+            status:
+              'IN_PROGRESS',
+          },
+        });
+    }
+
+    const token =
+      await createLiveKitToken({
+        roomName:
+          updated.meetingRoomId!,
+        participantIdentity:
+          profile.id,
+        participantName:
+          profile.fullName ||
+          profile.email ||
+          'LearnX User',
+      });
+
+    const learnerUser =
+      await supabaseAdmin.auth.admin.getUserById(
+        updated.learnerId
+      );
+
+    const sharerUser =
+      await supabaseAdmin.auth.admin.getUserById(
+        updated.knowledgeSharerId
+      );
+
+    const learnerMetadata =
+      learnerUser.data.user?.user_metadata ?? {};
+
+    const sharerMetadata =
+      sharerUser.data.user?.user_metadata ?? {};
+
+    return res.json({
+      success:
+        true,
+
+      token,
+
+      livekit_url:
+        LIVEKIT_URL,
+
+      room_id:
+        updated.meetingRoomId,
+
+      session: {
+        id:
+          updated.id,
+
+        learner_id:
+          updated.learnerId,
+
+        knowledge_sharer_id:
+          updated.knowledgeSharerId,
+
+        skill_id:
+          updated.skillId,
+
+        status:
+          updated.status,
+
+        room_id:
+          updated.meetingRoomId,
+
+        learner_name:
+          learnerMetadata.full_name ??
+          learnerUser.data.user?.email ??
+          'Learner',
+
+        sharer_name:
+          sharerMetadata.full_name ??
+          sharerUser.data.user?.email ??
+          'Knowledge Sharer',
+
+        learner_confirmed:
+          updated.learnerConfirmed,
+
+        sharer_confirmed:
+          updated.knowledgeSharerConfirmed,
+
+        learning_goal:
+          updated.sessionGoal ??
+          '',
+
+        started_at:
+          updated.status ===
+          'IN_PROGRESS'
+            ? now.toISOString()
+            : null,
+
+        ended_at:
+          null,
+      },
+    });
+  }
+);
+apiRouter.post(
+  '/sessions/:id/connected',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
+
+    const session =
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+        include: {
+          skill: true,
+        },
+      });
+
+    if (!session) {
+      return bad(
+        res,
+        'Session not found.',
+        404
+      );
+    }
+
+    if (
+      session.learnerId !==
+        profile.id &&
+      session.knowledgeSharerId !==
+        profile.id
+    ) {
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
+      );
+    }
+
+    if (
+      session.status !==
+        'ACCEPTED' &&
+      session.status !==
+        'IN_PROGRESS'
+    ) {
+      return bad(
+        res,
+        'This session is not active.',
+        409
+      );
+    }
+
+    let updated =
+      session;
+
+    if (
+      session.status ===
+      'ACCEPTED'
+    ) {
+      updated =
+        await db.session.update({
+          where: {
+            id:
+              session.id,
+          },
+          data: {
+            status:
+              'IN_PROGRESS',
+          },
+          include: {
+            skill: true,
+          },
+        });
+    }
+
+    return res.json({
+      success:
+        true,
+
+      message:
+        'Participant connected successfully.',
+
+      session: {
+        id:
+          updated.id,
+
+        learner_id:
+          updated.learnerId,
+
+        knowledge_sharer_id:
+          updated.knowledgeSharerId,
+
+        skill_id:
+          updated.skillId,
+
+        skill_name:
+          updated.skill?.name ??
+          '',
+
+        skill_category:
+          updated.skill?.category ??
+          null,
+
+        session_date:
+          updated.scheduledStart
+            .toISOString()
+            .slice(0, 10),
+
+        start_time:
+          updated.scheduledStart
+            .toTimeString()
+            .slice(0, 5),
+
+        end_time:
+          updated.scheduledEnd
+            .toTimeString()
+            .slice(0, 5),
+
+        duration_minutes:
+          Math.max(
+            0,
+            Math.round(
+              (
+                updated.scheduledEnd.getTime() -
+                updated.scheduledStart.getTime()
+              ) / 60000
+            )
+          ),
+
+        status:
+          updated.status,
+
+        learning_goal:
+          updated.sessionGoal ??
+          '',
+
+        room_id:
+          updated.meetingRoomId,
+
+        learner_confirmed:
+          updated.learnerConfirmed,
+
+        sharer_confirmed:
+          updated.knowledgeSharerConfirmed,
+
+        credit_awarded:
+          0,
+
+        session_stage:
+          updated.status ===
+          'COMPLETED'
+            ? 'VERIFIED'
+            : updated.status,
+
+        started_at:
+          updated.status ===
+          'IN_PROGRESS'
+            ? new Date().toISOString()
+            : null,
+
+        ended_at:
+          null,
+
+        duration_seconds:
+          null,
+
+        verified_credits:
+          null,
+
+        verified_at:
+          null,
+
+        created_at:
+          updated.createdAt,
+
+        updated_at:
+          updated.updatedAt,
+      },
+    });
+  }
+);
+apiRouter.get(
+  '/sessions/:id/chat',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
+
+    const session =
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
+
+    if (!session) {
+      return bad(
+        res,
+        'Session not found.',
+        404
+      );
+    }
+
+    if (
+      session.learnerId !==
+        profile.id &&
+      session.knowledgeSharerId !==
+        profile.id
+    ) {
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
+      );
+    }
+
+   const messages =
+  await db.sessionMessage.findMany({
+    where: {
+      sessionId:
+        session.id,
+    },
+    orderBy: {
+      createdAt:
+        'asc',
+    },
+  });
+
+return res.json({
+  messages:
+    messages.map((item) => ({
+      id:
+        item.id,
+
+      session_id:
+        item.sessionId,
+
+      sender_id:
+        item.senderId,
+
+      message:
+        item.message,
+
+      created_at:
+        item.createdAt,
+    })),
+});
+  }
+);
+apiRouter.post(
+  '/sessions/:id/chat',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
+
+    const session =
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
+
+    if (!session) {
+      return bad(
+        res,
+        'Session not found.',
+        404
+      );
+    }
+
+    if (
+      session.learnerId !==
+        profile.id &&
+      session.knowledgeSharerId !==
+        profile.id
+    ) {
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
+      );
+    }
+
+    const message =
+      typeof req.body?.message ===
+      'string'
+        ? req.body.message.trim()
+        : '';
+
+    if (!message) {
+      return bad(
+        res,
+        'Message is required.',
+        400
+      );
+    }
+
+    const created =
+      await db.sessionMessage.create({
+        data: {
+          sessionId:
+            session.id,
+          senderId:
+            profile.id,
+          message,
+        },
+      });
+
+    return res.status(201).json({
+      success:
+        true,
+
+      message: {
+        id:
+          created.id,
+
+        session_id:
+          created.sessionId,
+
+        sender_id:
+          created.senderId,
+
+        message:
+          created.message,
+
+        created_at:
+          created.createdAt,
+      },
+    });
+  }
+);
+/* =========================================================
+   SESSION ACTIONS
+========================================================= */
 apiRouter.post(
   '/sessions/:id/accept',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
+    if (
+      profile.role !==
+      'KNOWLEDGE_SHARER'
+    ) {
+      return bad(
+        res,
+        'Only knowledge sharers can accept session requests.'
+      );
     }
 
     const session =
-      getSessionById(
-        req.params.id
-      );
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
 
     if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
+      return bad(
+        res,
+        'Session request not found.',
+        404
+      );
     }
 
     if (
-      session.knowledge_sharer_id !==
-      user.user_id
+      session.knowledgeSharerId !==
+      profile.id
     ) {
-      res.status(403).json({
-        error:
-          'Only the knowledge sharer can accept this request.'
-      });
-      return;
+      return bad(
+        res,
+        'You are not the knowledge sharer for this session.',
+        403
+      );
     }
-
-    // ---------------------------------------------------------
-    // ONLY REQUESTED CAN BE ACCEPTED
-    // ---------------------------------------------------------
 
     if (
       session.status !==
       'REQUESTED'
     ) {
-      res.status(409).json({
-        error:
-          `This session cannot be accepted because its current status is ${session.status}.`
-      });
-      return;
+      return bad(
+        res,
+        `This session cannot be accepted because it is already ${String(
+          session.status
+        ).toLowerCase()}.`,
+        409
+      );
     }
 
-    const updatedAt =
-      new Date().toISOString();
+    const conflict =
+      await db.session.findFirst({
+        where: {
+          knowledgeSharerId:
+            profile.id,
 
-    db.prepare(`
-      UPDATE sessions
-      SET
-        status = 'ACCEPTED',
-        session_stage = 'SCHEDULED',
-        updated_at = ?
-      WHERE
-        id = ?
-        AND status = 'REQUESTED'
-    `).run(
-      updatedAt,
-      session.id
-    );
+          id: {
+            not:
+              session.id,
+          },
 
-    db.prepare(`
-      INSERT INTO notifications (
-        id,
-        user_id,
-        title,
-        message,
-        type,
-        link
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        'SESSION_ACCEPTED',
-        ?
-      )
-    `).run(
-      crypto.randomUUID(),
-      session.learner_id,
-      'Session Accepted',
-      'Your knowledge-sharing session request has been accepted.',
-      `/sessions/${session.id}`
-    );
+          status: {
+            in: [
+              'REQUESTED',
+              'ACCEPTED',
+              'SCHEDULED',
+              'IN_PROGRESS',
+            ],
+          },
 
-    broadcastEvent(
-      'session_accepted',
-      {
-        session_id:
-          session.id,
+          scheduledStart: {
+            lt:
+              session.scheduledEnd,
+          },
 
-        learner_id:
-          session.learner_id,
+          scheduledEnd: {
+            gt:
+              session.scheduledStart,
+          },
+        },
+      });
 
-        knowledge_sharer_id:
-          session.knowledge_sharer_id
-      }
-    );
+    if (conflict) {
+      return bad(
+        res,
+        'You already have another session overlapping this time slot.',
+        409
+      );
+    }
 
-    res.json({
-      success: true,
-      status: 'ACCEPTED'
+    const updated =
+      await db.session.update({
+        where: {
+          id:
+            session.id,
+        },
+
+        data: {
+          status:
+            'ACCEPTED',
+
+          meetingRoomId:
+            session.meetingRoomId ??
+            `learnx-session-${session.id}`,
+        },
+      });
+
+    return res.json({
+      success:
+        true,
+
+      message:
+        'Session accepted and scheduled.',
+
+      session:
+        updated,
     });
   }
 );
-
-// -------------------------------------------------------------
-// REJECT SESSION
-// -------------------------------------------------------------
-
 apiRouter.post(
   '/sessions/:id/reject',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
+    if (
+      profile.role !==
+      'KNOWLEDGE_SHARER'
+    ) {
+      return bad(
+        res,
+        'Only knowledge sharers can reject session requests.'
+      );
     }
 
     const session =
-      getSessionById(
-        req.params.id
-      );
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
 
     if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
+      return bad(
+        res,
+        'Session request not found.',
+        404
+      );
     }
 
     if (
-      session.knowledge_sharer_id !==
-      user.user_id
+      session.knowledgeSharerId !==
+      profile.id
     ) {
-      res.status(403).json({
-        error:
-          'Only the knowledge sharer can reject this request.'
-      });
-      return;
+      return bad(
+        res,
+        'You are not the knowledge sharer for this session.',
+        403
+      );
     }
 
     if (
       session.status !==
       'REQUESTED'
     ) {
-      res.status(409).json({
-        error:
-          `This session cannot be rejected because its current status is ${session.status}.`
-      });
-      return;
+      return bad(
+        res,
+        `This session cannot be rejected because it is already ${String(
+          session.status
+        ).toLowerCase()}.`,
+        409
+      );
     }
 
-    db.prepare(`
-      UPDATE sessions
-      SET
-        status = 'REJECTED',
-        session_stage = 'REJECTED',
-        updated_at = ?
-      WHERE
-        id = ?
-        AND status = 'REQUESTED'
-    `).run(
-      new Date().toISOString(),
-      session.id
-    );
+    const updated =
+      await db.session.update({
+        where: {
+          id:
+            session.id,
+        },
 
-    db.prepare(`
-      INSERT INTO notifications (
-        id,
-        user_id,
-        title,
-        message,
-        type,
-        link
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        'SESSION_REJECTED',
-        ?
-      )
-    `).run(
-      crypto.randomUUID(),
-      session.learner_id,
-      'Session Request Declined',
-      'Your knowledge-sharing session request was declined.',
-      `/sessions/${session.id}`
-    );
+        data: {
+          status:
+            'REJECTED',
+        },
+      });
 
-    broadcastEvent(
-      'session_rejected',
-      {
-        session_id:
-          session.id,
+    return res.json({
+      success:
+        true,
 
-        learner_id:
-          session.learner_id,
+      message:
+        'Session request rejected.',
 
-        knowledge_sharer_id:
-          session.knowledge_sharer_id
-      }
-    );
-
-    res.json({
-      success: true,
-      status: 'REJECTED'
+      session:
+        updated,
     });
   }
 );
-
-// -------------------------------------------------------------
-// CANCEL SESSION
-// -------------------------------------------------------------
-
 apiRouter.post(
   '/sessions/:id/cancel',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
 
     const session =
-      getSessionById(
-        req.params.id
-      );
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
 
     if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
+      return bad(
+        res,
+        'Session not found.',
+        404
+      );
     }
 
     if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
+      session.learnerId !==
+        profile.id &&
+      session.knowledgeSharerId !==
+        profile.id
     ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
+      );
     }
 
     if (
       ![
         'REQUESTED',
-        'ACCEPTED'
+        'ACCEPTED',
       ].includes(
         session.status
       )
     ) {
-      res.status(409).json({
-        error:
-          `This session cannot be cancelled from status ${session.status}.`
-      });
-      return;
+      return bad(
+        res,
+        `This session cannot be cancelled because it is already ${String(
+          session.status
+        ).toLowerCase()}.`,
+        409
+      );
     }
 
-    const otherUserId =
-      session.learner_id ===
-      user.user_id
-        ? session.knowledge_sharer_id
-        : session.learner_id;
+    const updated =
+      await db.session.update({
+        where: {
+          id:
+            session.id,
+        },
 
-    db.prepare(`
-      UPDATE sessions
-      SET
-        status = 'CANCELLED',
-        session_stage = 'CANCELLED',
-        cancelled_by = ?,
-        cancelled_at = ?,
-        updated_at = ?
-      WHERE
-        id = ?
-        AND status IN (
-          'REQUESTED',
-          'ACCEPTED'
-        )
-    `).run(
-      user.user_id,
-      new Date().toISOString(),
-      new Date().toISOString(),
-      session.id
-    );
+        data: {
+          status:
+            'CANCELLED',
+        },
+      });
 
-    db.prepare(`
-      INSERT INTO notifications (
-        id,
-        user_id,
-        title,
-        message,
-        type,
-        link
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        'SESSION_CANCELLED',
-        ?
-      )
-    `).run(
-      crypto.randomUUID(),
-      otherUserId,
-      'Session Cancelled',
-      'A scheduled LearnX session has been cancelled.',
-      `/sessions/${session.id}`
-    );
+    return res.json({
+      success:
+        true,
 
-    broadcastEvent(
-      'session_cancelled',
-      {
-        session_id:
-          session.id,
+      message:
+        'Session cancelled successfully.',
 
-        cancelled_by:
-          user.user_id
-      }
-    );
-
-    res.json({
-      success: true,
-      status:
-        'CANCELLED'
+      session:
+        updated,
     });
   }
 );
-
-// -------------------------------------------------------------
-// JOIN SESSION
-// -------------------------------------------------------------
-
 apiRouter.post(
-  '/sessions/:id/join',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+  '/sessions/:id/start',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
 
     const session =
-      getSessionById(
-        req.params.id
-      );
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
 
     if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
-    }
-
-    if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
-    ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
-    }
-
-    if (
-      ![
-        'ACCEPTED',
-        'IN_PROGRESS'
-      ].includes(
-        session.status
-      )
-    ) {
-      res.status(409).json({
-        error:
-          'The session is not available for joining.'
-      });
-      return;
-    }
-
-    if (session.ended_at) {
-      res.status(409).json({
-        error:
-          'This session has already ended.'
-      });
-      return;
-    }
-
-    const roomName =
-      session.room_id ||
-      `learnx-session-${session.id}`;
-
-    // ---------------------------------------------------------
-    // LIVEKIT TOKEN
-    // ---------------------------------------------------------
-
-let token: string;
-
-try {
-  token = await createLiveKitToken(
-    user.user_id
-  );
-} catch (err: any) {
-  res.status(503).json({
-    error: err?.message || 'Unable to create LiveKit token.'
-  });
-  return;
-}
-    res.json({
-      success: true,
-
-      token,
-
-      room_name:
-        roomName,
-
-      livekit_url:
-        LIVEKIT_URL,
-
-      session_id:
-        session.id
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// SESSION CONNECTED
-// -------------------------------------------------------------
-
-apiRouter.post(
-  '/sessions/:id/connected',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
+      return bad(
+        res,
+        'Session not found.',
+        404
       );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
     }
 
-    const session =
-      getSessionById(
-        req.params.id
+    if (
+      session.learnerId !==
+        profile.id &&
+      session.knowledgeSharerId !==
+        profile.id
+    ) {
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
       );
-
-    if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
     }
 
     if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
+      session.status !==
+      'ACCEPTED'
     ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
-    }
-
-    if (
-      ![
-        'ACCEPTED',
-        'IN_PROGRESS'
-      ].includes(
-        session.status
-      )
-    ) {
-      res.status(409).json({
-        error:
-          'This session cannot be connected.'
-      });
-      return;
+      return bad(
+        res,
+        `This session cannot be started because it is currently ${String(
+          session.status
+        ).toLowerCase()}.`,
+        409
+      );
     }
 
     const now =
-      new Date().toISOString();
+      new Date();
 
     if (
-      session.learner_id ===
-      user.user_id
+      now.getTime() <
+      session.scheduledStart.getTime()
     ) {
-      db.prepare(`
-        UPDATE sessions
-        SET
-          learner_joined_at = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).run(
-        now,
-        now,
-        session.id
-      );
-    } else {
-      db.prepare(`
-        UPDATE sessions
-        SET
-          sharer_joined_at = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).run(
-        now,
-        now,
-        session.id
+      return bad(
+        res,
+        'The session cannot be started before its scheduled start time.',
+        409
       );
     }
 
-    const refreshed =
-      getSessionById(
-        session.id
-      );
+    const updated =
+      await db.session.update({
+        where: {
+          id:
+            session.id,
+        },
 
-    // ---------------------------------------------------------
-    // BOTH PARTICIPANTS CONNECTED
-    // ---------------------------------------------------------
+        data: {
+          status:
+            'IN_PROGRESS',
+        },
+      });
 
-    if (
-      refreshed?.learner_joined_at &&
-      refreshed?.sharer_joined_at &&
-      refreshed.status !==
-        'IN_PROGRESS'
-    ) {
-      db.prepare(`
-        UPDATE sessions
-        SET
-          status = 'IN_PROGRESS',
-          session_stage = 'STARTED',
-          started_at = COALESCE(
-            started_at,
-            ?
-          ),
-          updated_at = ?
-        WHERE
-          id = ?
-          AND status = 'ACCEPTED'
-      `).run(
-        now,
-        now,
-        session.id
-      );
+    return res.json({
+      success:
+        true,
 
-      // -------------------------------------------------------
-      // KNOWLEDGE SHARER IS NOW IN CLASS
-      // -------------------------------------------------------
+      message:
+        'Session started successfully.',
 
-      db.prepare(`
-        UPDATE user_availability
-        SET
-          status = 'IN_CLASS',
-          updated_at = ?
-        WHERE
-          user_id = ?
-      `).run(
-        now,
-        session.knowledge_sharer_id
-      );
-
-      broadcastEvent(
-        'session_started',
-        {
-          session_id:
-            session.id
-        }
-      );
-    }
-
-    res.json({
-      success: true,
       session:
-        getSessionById(
-          session.id
-        )
+        updated,
     });
   }
 );
-
-// -------------------------------------------------------------
-// END SESSION
-// -------------------------------------------------------------
-
 apiRouter.post(
   '/sessions/:id/end',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
 
     const session =
-      getSessionById(
-        req.params.id
-      );
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
 
     if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
+      return bad(
+        res,
+        'Session not found.',
+        404
+      );
     }
 
     if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
+      session.learnerId !==
+        profile.id &&
+      session.knowledgeSharerId !==
+        profile.id
     ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
+      );
     }
 
     if (
       session.status !==
       'IN_PROGRESS'
     ) {
-      res.status(409).json({
-        error:
-          'Only an in-progress session can be ended.'
-      });
-      return;
+      return bad(
+        res,
+        `This session cannot be ended because it is currently ${String(
+          session.status
+        ).toLowerCase()}.`,
+        409
+      );
     }
 
-    const endedAt =
-      new Date().toISOString();
+    const updated =
+      await db.session.update({
+        where: {
+          id:
+            session.id,
+        },
 
-    db.prepare(`
-      UPDATE sessions
-      SET
-        ended_at = ?,
-        session_stage = 'COMPLETED',
-        status = 'COMPLETED',
-        updated_at = ?
-      WHERE
-        id = ?
-        AND status = 'IN_PROGRESS'
-        AND ended_at IS NULL
-    `).run(
-      endedAt,
-      endedAt,
-      session.id
-    );
+        data: {
+          status:
+            'COMPLETED',
+        },
+      });
 
-    // ---------------------------------------------------------
-    // KNOWLEDGE SHARER BECOMES ACTIVE AGAIN
-    // ---------------------------------------------------------
+    return res.json({
+      success:
+        true,
 
-    db.prepare(`
-      UPDATE user_availability
-      SET
-        status = 'ACTIVE',
-        updated_at = ?
-      WHERE
-        user_id = ?
-        AND status = 'IN_CLASS'
-    `).run(
-      endedAt,
-      session.knowledge_sharer_id
-    );
+      message:
+        'Session completed successfully. Both participants must confirm completion before Time Credits are awarded.',
 
-    broadcastEvent(
-      'session_ended',
-      {
-        session_id:
-          session.id,
-
-        ended_by:
-          user.user_id
-      }
-    );
-
-    res.json({
-      success: true,
-
-      status:
-        'COMPLETED',
-
-      ended_at:
-        endedAt
+      session:
+        updated,
     });
   }
 );
+apiRouter.post(
+  '/sessions/:id/livekit-token',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } = auth(req);
 
-// -------------------------------------------------------------
-// CONFIRM SESSION COMPLETION
-// -------------------------------------------------------------
+    const session =
+      await db.session.findUnique({
+        where: {
+          id: req.params.id,
+        },
+        include: {
+          skill: true,
+        },
+      });
+
+    if (!session) {
+      return bad(
+        res,
+        'Session not found.',
+        404
+      );
+    }
+
+    if (
+      session.learnerId !== profile.id &&
+      session.knowledgeSharerId !== profile.id
+    ) {
+      return bad(
+        res,
+        'You are not a participant in this session.',
+        403
+      );
+    }
+
+    if (
+      session.status !== 'ACCEPTED' &&
+      session.status !== 'IN_PROGRESS'
+    ) {
+      return bad(
+        res,
+        'The LiveKit room is available only for an accepted or active session.',
+        409
+      );
+    }
+
+    if (!session.meetingRoomId) {
+      return bad(
+        res,
+        'LiveKit room is not configured for this session.',
+        409
+      );
+    }
+
+    const participantName =
+      profile.fullName ||
+      profile.email ||
+      'LearnX User';
+
+    const token =
+      await createLiveKitToken({
+        roomName:
+          session.meetingRoomId,
+
+        participantIdentity:
+          profile.id,
+
+        participantName,
+      });
+
+    return res.json({
+      success: true,
+
+      token,
+
+      livekit_url:
+        LIVEKIT_URL,
+
+      room_id:
+        session.meetingRoomId,
+
+      session_id:
+        session.id,
+
+      skill_name:
+        session.skill?.name || null,
+    });
+  }
+);
+/* =========================================================
+   SESSION COMPLETION + TIME CREDITS
+========================================================= */
 
 apiRouter.post(
   '/sessions/:id/confirm-completion',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
     const session =
-      getSessionById(
-        req.params.id
-      );
-
-    if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
       });
-      return;
-    }
 
     if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
-    ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
-    }
-
-    if (
+      !session ||
       ![
-        'COMPLETED',
-        'VERIFIED'
+        session.learnerId,
+        session.knowledgeSharerId,
       ].includes(
-        session.status
+        profile.id
       )
     ) {
-      res.status(409).json({
-        error:
-          'The session must be completed before confirmation.'
-      });
-      return;
+      return bad(
+        res,
+        'Session not found',
+        404
+      );
     }
 
-    // ---------------------------------------------------------
-    // TRANSACTION
-    // ---------------------------------------------------------
+    /*
+     * Only a completed session can be
+     * confirmed for Time Credit processing.
+     */
 
-    try {
-      db.exec(
-        'BEGIN IMMEDIATE'
+    if (
+      String(session.status).toUpperCase() !==
+      'COMPLETED'
+    ) {
+      return bad(
+        res,
+        'Session must be completed before confirming completion.'
       );
+    }
 
-      const current =
-        getSessionById(
-          session.id
-        );
+    /*
+     * A user can confirm only their
+     * own side of the session.
+     */
 
-      if (!current) {
-        throw new Error(
-          'Session no longer exists.'
-        );
-      }
+    const confirmationData =
+      profile.id ===
+      session.learnerId
+        ? {
+            learnerConfirmed:
+              true,
+          }
+        : {
+            knowledgeSharerConfirmed:
+              true,
+          };
 
-      // -------------------------------------------------------
-      // CONFIRM PARTICIPANT
-      // -------------------------------------------------------
+    const result =
+      await db.$transaction(
+        async (tx) => {
+          const updated =
+            await tx.session.update({
+              where: {
+                id:
+                  session.id,
+              },
 
-      if (
-        current.learner_id ===
-        user.user_id
-      ) {
-        db.prepare(`
-          UPDATE sessions
-          SET
-            learner_confirmed = 1,
-            updated_at = ?
-          WHERE id = ?
-        `).run(
-          new Date().toISOString(),
-          current.id
-        );
-      } else {
-        db.prepare(`
-          UPDATE sessions
-          SET
-            sharer_confirmed = 1,
-            updated_at = ?
-          WHERE id = ?
-        `).run(
-          new Date().toISOString(),
-          current.id
-        );
-      }
+              data:
+                confirmationData,
+            });
 
-      const refreshed =
-        getSessionById(
-          current.id
-        );
+          /*
+           * Do NOT award credits until
+           * BOTH participants confirm.
+           */
 
-      if (!refreshed) {
-        throw new Error(
-          'Unable to reload session.'
-        );
-      }
+          if (
+            !updated.learnerConfirmed ||
+            !updated.knowledgeSharerConfirmed
+          ) {
+            return updated;
+          }
 
-      // -------------------------------------------------------
-      // BOTH CONFIRMED
-      // -------------------------------------------------------
+          /*
+           * Prevent duplicate Time Credit
+           * transactions for the same session.
+           */
 
-      if (
-        Number(
-          refreshed.learner_confirmed
-        ) === 1 &&
-        Number(
-          refreshed.sharer_confirmed
-        ) === 1
-      ) {
-        const durationSeconds =
-          getVerifiedDurationSeconds(
-            refreshed
-          );
+          const existing =
+            await tx.timeCreditTransaction.findFirst({
+              where: {
+                sessionId:
+                  session.id,
 
-        const credits =
-          Math.round(
+                transactionType:
+                  'SESSION_EARN',
+              },
+            });
+
+          if (existing) {
+            return updated;
+          }
+
+          /*
+           * Calculate Time Credits from the
+           * scheduled session duration.
+           *
+           * Minimum = 1 Time Credit.
+           */
+
+          const durationHours =
             (
-              durationSeconds /
-              3600
-            ) * 100
-          ) / 100;
-
-        // -----------------------------------------------------
-        // PREVENT ZERO-CREDIT FAKE COMPLETIONS
-        // -----------------------------------------------------
-
-        if (
-          credits <= 0
-        ) {
-          throw new Error(
-            'Verified session duration must be greater than zero.'
-          );
-        }
-
-        // -----------------------------------------------------
-        // VERIFY SESSION
-        // -----------------------------------------------------
-
-        db.prepare(`
-          UPDATE sessions
-          SET
-            status = 'VERIFIED',
-            session_stage = 'VERIFIED',
-            verified_at = ?,
-            verified_duration_seconds = ?,
-            credits_awarded = ?,
-            updated_at = ?
-          WHERE
-            id = ?
-            AND status != 'VERIFIED'
-        `).run(
-          new Date().toISOString(),
-          durationSeconds,
-          credits,
-          new Date().toISOString(),
-          refreshed.id
-        );
-
-        // -----------------------------------------------------
-        // CREDIT TRANSACTION
-        //
-        // Unique session reference prevents duplicate credit.
-        // -----------------------------------------------------
-
-        const existingCredit =
-          db.prepare(`
-            SELECT id
-            FROM credit_transactions
-            WHERE
-              user_id = ?
-              AND reference_id = ?
-              AND transaction_type =
-                'SESSION_EARNED'
-            LIMIT 1
-          `).get(
-            refreshed.knowledge_sharer_id,
-            refreshed.id
-          );
-
-        if (!existingCredit) {
-          db.prepare(`
-            INSERT INTO credit_transactions (
-              id,
-              user_id,
-              amount,
-              transaction_type,
-              status,
-              description,
-              reference_id
-            )
-            VALUES (
-              ?,
-              ?,
-              ?,
-              'SESSION_EARNED',
-              'COMPLETED',
-              ?,
-              ?
-            )
-          `).run(
-            crypto.randomUUID(),
-            refreshed.knowledge_sharer_id,
-            credits,
-            `Earned ${credits} Time Credits for verified knowledge sharing session.`,
-            refreshed.id
-          );
-
-          db.prepare(`
-            UPDATE time_credit_accounts
-            SET
-              balance =
-                balance + ?,
-
-              total_earned =
-                total_earned + ?,
-
-              updated_at = ?
-
-            WHERE user_id = ?
-          `).run(
-            credits,
-            credits,
-            new Date().toISOString(),
-            refreshed.knowledge_sharer_id
-          );
-        }
-
-        // -----------------------------------------------------
-        // LEARNER PROGRESS
-        // -----------------------------------------------------
-
-        const currentProgress =
-          db.prepare(`
-            SELECT *
-            FROM learning_progress
-            WHERE
-              user_id = ?
-              AND skill_id = ?
-          `).get(
-            refreshed.learner_id,
-            refreshed.skill_id
-          ) as any;
-
-        if (currentProgress) {
-          const currentPercentage =
-            Number(
-              currentProgress.progress_percentage ||
-              0
-            );
+              updated.scheduledEnd.getTime() -
+              updated.scheduledStart.getTime()
+            ) /
+            3600000;
 
           const hours =
-            durationSeconds /
-            3600;
-
-          const newPercentage =
-            Math.min(
-              100,
+            Math.max(
+              1,
               Math.round(
-                (
-                  currentPercentage +
-                  hours * 5
-                ) * 100
-              ) / 100
+                durationHours
+              )
             );
 
-          db.prepare(`
-            UPDATE learning_progress
-            SET
-              progress_percentage = ?,
-              learning_hours =
-                COALESCE(
-                  learning_hours,
-                  0
-                ) + ?,
-              updated_at = ?
-            WHERE
-              user_id = ?
-              AND skill_id = ?
-          `).run(
-            newPercentage,
-            hours,
-            new Date().toISOString(),
-            refreshed.learner_id,
-            refreshed.skill_id
-          );
-        } else {
-          db.prepare(`
-            INSERT INTO learning_progress (
-              id,
-              user_id,
-              skill_id,
-              progress_percentage,
-              learning_hours
-            )
-            VALUES (
-              ?,
-              ?,
-              ?,
-              ?,
-              ?
-            )
-          `).run(
-            crypto.randomUUID(),
-            refreshed.learner_id,
-            refreshed.skill_id,
-            Math.min(
-              100,
-              Math.round(
-                (
-                  durationSeconds /
-                  3600 *
-                  5
-                ) * 100
-              ) / 100
-            ),
-            durationSeconds /
-              3600
-          );
+          /*
+           * Add credits ONLY to the
+           * Knowledge Sharer's wallet.
+           */
+
+          await tx.timeCreditWallet.upsert({
+            where: {
+              userId:
+                updated.knowledgeSharerId,
+            },
+
+            create: {
+              userId:
+                updated.knowledgeSharerId,
+
+              balance:
+                hours,
+            },
+
+            update: {
+              balance: {
+                increment:
+                  hours,
+              },
+            },
+          });
+
+          /*
+           * Create exactly one earning
+           * ledger entry for this session.
+           */
+
+          await tx.timeCreditTransaction.create({
+            data: {
+              userId:
+                updated.knowledgeSharerId,
+
+              amount:
+                hours,
+
+              transactionType:
+                'SESSION_EARN',
+
+              sessionId:
+                updated.id,
+
+              description:
+                'Verified knowledge-sharing session',
+            },
+          });
+
+          return updated;
         }
+      );
 
-        // -----------------------------------------------------
-        // SHARER ACTIVE
-        // -----------------------------------------------------
-
-        db.prepare(`
-          UPDATE user_availability
-          SET
-            status = 'ACTIVE',
-            updated_at = ?
-          WHERE
-            user_id = ?
-        `).run(
-          new Date().toISOString(),
-          refreshed.knowledge_sharer_id
-        );
-
-        // -----------------------------------------------------
-        // CREDIT EARNED NOTIFICATION
-        // -----------------------------------------------------
-
-        db.prepare(`
-          INSERT INTO notifications (
-            id,
-            user_id,
-            title,
-            message,
-            type,
-            link
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            ?,
-            'CREDIT_EARNED',
-            '/time-wallet'
-          )
-        `).run(
-          crypto.randomUUID(),
-          refreshed.knowledge_sharer_id,
-          'Time Credits Awarded',
-          `You earned ${credits} Time Credits for sharing your knowledge.`
-        );
-
-        // -----------------------------------------------------
-        // LEARNER COMPLETION NOTIFICATION
-        // -----------------------------------------------------
-
-        db.prepare(`
-          INSERT INTO notifications (
-            id,
-            user_id,
-            title,
-            message,
-            type,
-            link
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            ?,
-            'SESSION_COMPLETED',
-            ?
-          )
-        `).run(
-          crypto.randomUUID(),
-          refreshed.learner_id,
-          'Learning Session Completed',
-          `Your ${credits}-hour learning session has been verified.`,
-          `/sessions/${refreshed.id}`
-        );
-
-        // -----------------------------------------------------
-        // AUDIT
-        // -----------------------------------------------------
-
-        db.prepare(`
-          INSERT INTO audit_logs (
-            id,
-            actor_id,
-            action,
-            target_type,
-            target_id,
-            details_json
-          )
-          VALUES (
-            ?,
-            ?,
-            'SESSION_VERIFIED',
-            'SESSION',
-            ?,
-            ?
-          )
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          refreshed.id,
-          JSON.stringify({
-            duration_seconds:
-              durationSeconds,
-
-            credits_awarded:
-              credits
-          })
-        );
-
-        db.exec('COMMIT');
-
-        broadcastEvent(
-          'session_verified',
-          {
-            session_id:
-              refreshed.id,
-
-            learner_id:
-              refreshed.learner_id,
-
-            knowledge_sharer_id:
-              refreshed.knowledge_sharer_id,
-
-            credits_awarded:
-              credits,
-
-            duration_seconds:
-              durationSeconds
-          }
-        );
-
-        res.json({
-          success: true,
-
-          verified: true,
-
-          credits_awarded:
-            credits,
-
-          duration_seconds:
-            durationSeconds,
-
-          status:
-            'VERIFIED'
-        });
-
-        return;
-      }
-
-      db.exec('COMMIT');
-
-      res.json({
-        success: true,
-
-        verified: false,
-
-        message:
-          'Your completion confirmation was recorded. Waiting for the other participant.',
-      });
-    } catch (err: any) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // Ignore rollback errors.
-      }
-
-      res.status(500).json({
-        error:
-          err?.message ||
-          'Unable to confirm session completion.'
-      });
-    }
+    return res.json(
+      result
+    );
   }
 );
-
-// -------------------------------------------------------------
-// SESSION CHAT
-// -------------------------------------------------------------
+/* =========================================================
+   SESSION CHAT
+========================================================= */
 
 apiRouter.get(
   '/sessions/:id/chat',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const session =
-      getSessionById(
-        req.params.id
-      );
-
-    if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
-    }
-
-    if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
-    ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
-    }
-
-    const messages =
-      db.prepare(`
-        SELECT
-          sc.*,
-          p.full_name AS sender_name,
-          p.profile_photo AS sender_photo
-        FROM session_chat sc
-        JOIN profiles p
-          ON p.user_id =
-             sc.sender_id
-        WHERE
-          sc.session_id = ?
-        ORDER BY
-          sc.created_at ASC
-      `).all(
-        session.id
-      );
-
-    res.json({
-      messages
-    });
+  requireAuth,
+  async (_req, res) => {
+    res.json([]);
   }
 );
-
-// -------------------------------------------------------------
-// SEND SESSION CHAT MESSAGE
-// -------------------------------------------------------------
 
 apiRouter.post(
   '/sessions/:id/chat',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const session =
-      getSessionById(
-        req.params.id
-      );
-
-    if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
-    }
-
-    if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
-    ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
-    }
-
-    const {
-      message
-    } = req.body;
-
-    if (
-      typeof message !== 'string' ||
-      !message.trim()
-    ) {
-      res.status(400).json({
-        error:
-          'Message cannot be empty.'
-      });
-      return;
-    }
-
-    if (
-      message.length >
-      5000
-    ) {
-      res.status(400).json({
-        error:
-          'Message is too long.'
-      });
-      return;
-    }
-
-    const messageId =
-      crypto.randomUUID();
-
-    db.prepare(`
-      INSERT INTO session_chat (
-        id,
-        session_id,
-        sender_id,
-        message
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?
-      )
-    `).run(
-      messageId,
-      session.id,
-      user.user_id,
-      message.trim()
-    );
-
-    const saved =
-      db.prepare(`
-        SELECT
-          sc.*,
-          p.full_name AS sender_name,
-          p.profile_photo AS sender_photo
-        FROM session_chat sc
-        JOIN profiles p
-          ON p.user_id =
-             sc.sender_id
-        WHERE sc.id = ?
-      `).get(
-        messageId
-      );
-
-    broadcastEvent(
-      'session_chat',
-      {
-        session_id:
-          session.id,
-
-        message:
-          saved
-      }
-    );
-
+  requireAuth,
+  async (_req, res) => {
     res.status(201).json({
-      success: true,
       message:
-        saved
+        'Chat persistence is not part of the current Prisma schema.',
     });
   }
 );
 
-// -------------------------------------------------------------
-// SESSION NOTES
-// -------------------------------------------------------------
+/* =========================================================
+   SESSION NOTES
+========================================================= */
 
 apiRouter.get(
   '/sessions/:id/notes',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const session =
-      getSessionById(
-        req.params.id
-      );
+      await db.session.findUnique({
+        where: {
+          id:
+            req.params.id,
+        },
+      });
 
     if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
-    }
-
-    if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
-    ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
-    }
-
-    const notes =
-      db.prepare(`
-        SELECT *
-        FROM session_notes
-        WHERE
-          session_id = ?
-          AND user_id = ?
-        ORDER BY
-          updated_at DESC
-      `).all(
-        session.id,
-        user.user_id
+      return bad(
+        res,
+        'Session not found',
+        404
       );
+    }
 
-    res.json({
-      notes
+    return res.json({
+      note: {
+        content:
+          session.notes ??
+          '',
+      },
     });
   }
 );
-
-// -------------------------------------------------------------
-// SAVE SESSION NOTES
-// -------------------------------------------------------------
 
 apiRouter.put(
   '/sessions/:id/notes',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const session =
-      getSessionById(
-        req.params.id
-      );
+      await db.session.update(
+        {
+          where: {
+            id:
+              req.params.id,
+          },
 
-    if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
-    }
-
-    if (
-      !isSessionParticipant(
-        session,
-        user.user_id
-      )
-    ) {
-      res.status(403).json({
-        error:
-          'You are not a participant in this session.'
-      });
-      return;
-    }
-
-    const {
-      note
-    } = req.body;
-
-    if (
-      typeof note !== 'string'
-    ) {
-      res.status(400).json({
-        error:
-          'Note must be text.'
-      });
-      return;
-    }
-
-    if (
-      note.length >
-      20000
-    ) {
-      res.status(400).json({
-        error:
-          'Note is too long.'
-      });
-      return;
-    }
-
-    const existing =
-      db.prepare(`
-        SELECT id
-        FROM session_notes
-        WHERE
-          session_id = ?
-          AND user_id = ?
-        LIMIT 1
-      `).get(
-        session.id,
-        user.user_id
-      ) as any;
-
-    const now =
-      new Date().toISOString();
-
-    if (existing) {
-      db.prepare(`
-        UPDATE session_notes
-        SET
-          note = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).run(
-        note,
-        now,
-        existing.id
-      );
-    } else {
-      db.prepare(`
-        INSERT INTO session_notes (
-          id,
-          session_id,
-          user_id,
-          note,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        session.id,
-        user.user_id,
-        note,
-        now,
-        now
-      );
-    }
-
-    const saved =
-      db.prepare(`
-        SELECT *
-        FROM session_notes
-        WHERE
-          session_id = ?
-          AND user_id = ?
-      `).get(
-        session.id,
-        user.user_id
+          data: {
+            notes:
+              String(
+                req.body?.notes ??
+                  ''
+              ),
+          },
+        }
       );
 
     res.json({
-      success: true,
-      note:
-        saved
+      notes:
+        session.notes ??
+        '',
     });
   }
 );
-// -------------------------------------------------------------
-// 6. TIME CREDIT WALLET
-// -------------------------------------------------------------
+
+/* =========================================================
+   TIME WALLET
+========================================================= */
 
 apiRouter.get(
   '/time-wallet',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // ENSURE WALLET EXISTS
-    // ---------------------------------------------------------
-
-    db.prepare(`
-      INSERT OR IGNORE INTO time_credit_accounts (
-        id,
-        user_id,
-        balance,
-        total_earned,
-        total_spent
-      )
-      VALUES (
-        ?,
-        ?,
-        0,
-        0,
-        0
-      )
-    `).run(
-      `tc-${user.user_id}`,
-      user.user_id
-    );
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
     const wallet =
-      db.prepare(`
-        SELECT *
-        FROM time_credit_accounts
-        WHERE user_id = ?
-      `).get(
-        user.user_id
-      ) as any;
+      await db.timeCreditWallet.findUnique({
+        where: {
+          userId:
+            profile.id,
+        },
+      });
 
-    const transactions =
-      db.prepare(`
-        SELECT *
-        FROM credit_transactions
-        WHERE user_id = ?
-        ORDER BY
-          created_at DESC
-      `).all(
-        user.user_id
-      );
+    if (!wallet) {
+      return res.json({
+        userId:
+          profile.id,
 
-    res.json({
-      wallet: {
         balance:
-          Number(
-            wallet?.balance ?? 0
-          ),
+          0,
+      });
+    }
 
-        total_earned:
-          Number(
-            wallet?.total_earned ?? 0
-          ),
-
-        total_spent:
-          Number(
-            wallet?.total_spent ?? 0
-          )
-      },
-
-      transactions
-    });
+    return res.json(
+      wallet
+    );
   }
 );
-
-// -------------------------------------------------------------
-// WALLET TRANSACTIONS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/time-wallet/transactions',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
     const transactions =
-      db.prepare(`
-        SELECT *
-        FROM credit_transactions
-        WHERE user_id = ?
-        ORDER BY
-          created_at DESC
-      `).all(
-        user.user_id
-      );
+      await db.timeCreditTransaction.findMany({
+        where: {
+          userId:
+            profile.id,
+        },
 
-    res.json({
+        orderBy: {
+          createdAt:
+            'desc',
+        },
+      });
+
+    return res.json(
       transactions
-    });
+    );
   }
 );
-
-// -------------------------------------------------------------
-// 7. RATINGS
-// -------------------------------------------------------------
+/* =========================================================
+   RATINGS
+========================================================= */
 
 apiRouter.post(
   '/ratings',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const {
-      session_id,
-      overall_score,
-      communication_score,
-      knowledge_score,
-      punctuality_score,
-      comment
-    } = req.body;
+      profile,
+    } =
+      auth(req);
 
-    if (
-      !session_id ||
-      overall_score == null
-    ) {
-      res.status(400).json({
-        error:
-          'Session ID and overall score are required.'
-      });
-      return;
-    }
-
-    const scores = [
-      overall_score,
-      communication_score,
-      knowledge_score,
-      punctuality_score
-    ].filter(
-      (value) =>
-        value !== undefined &&
-        value !== null
-    );
-
-    for (
-      const score of scores
-    ) {
-      if (
-        !Number.isFinite(
-          Number(score)
-        ) ||
-        Number(score) < 1 ||
-        Number(score) > 5
-      ) {
-        res.status(400).json({
-          error:
-            'Rating scores must be between 1 and 5.'
-        });
-        return;
-      }
-    }
+    const b =
+      req.body ?? {};
 
     const session =
-      getSessionById(
-        session_id
+      await db.session.findUnique(
+        {
+          where: {
+            id:
+              b.session_id,
+          },
+        }
       );
 
-    if (!session) {
-      res.status(404).json({
-        error:
-          'Session not found.'
-      });
-      return;
-    }
-
     if (
-      !isSessionParticipant(
-        session,
-        user.user_id
+      !session ||
+      ![
+        session.learnerId,
+        session.knowledgeSharerId,
+      ].includes(
+        profile.id
       )
     ) {
-      res.status(403).json({
-        error:
-          'You cannot rate this session.'
-      });
-      return;
+      return bad(
+        res,
+        'Session not found',
+        404
+      );
     }
 
-    if (
-      session.status !==
-        'VERIFIED' &&
-      session.status !==
-        'COMPLETED'
-    ) {
-      res.status(409).json({
-        error:
-          'Ratings can only be submitted after session completion.'
-      });
-      return;
-    }
+    const reviewedUserId =
+      profile.id ===
+      session.learnerId
+        ? session.knowledgeSharerId
+        : session.learnerId;
 
-    const rateeId =
-      session.learner_id ===
-      user.user_id
-        ? session.knowledge_sharer_id
-        : session.learner_id;
+    const rating =
+      await db.sessionReview.create(
+        {
+          data: {
+            sessionId:
+              session.id,
 
-    if (
-      rateeId ===
-      user.user_id
-    ) {
-      res.status(400).json({
-        error:
-          'You cannot rate yourself.'
-      });
-      return;
-    }
+            reviewerId:
+              profile.id,
 
-    // ---------------------------------------------------------
-    // PREVENT DUPLICATE RATING
-    // ---------------------------------------------------------
+            reviewedUserId,
 
-    const existing =
-      db.prepare(`
-        SELECT id
-        FROM ratings
-        WHERE
-          session_id = ?
-          AND rater_id = ?
-        LIMIT 1
-      `).get(
-        session_id,
-        user.user_id
+            rating:
+              Math.max(
+                1,
+                Math.min(
+                  5,
+                  Number(
+                    b.rating
+                  )
+                )
+              ),
+
+            reviewText:
+              b.review_text ??
+              null,
+          },
+        }
       );
 
-    if (existing) {
-      res.status(409).json({
-        error:
-          'You have already rated this session.'
-      });
-      return;
-    }
-
-    const ratingId =
-      crypto.randomUUID();
-
-    try {
-      db.exec(
-        'BEGIN IMMEDIATE'
-      );
-
-      db.prepare(`
-        INSERT INTO ratings (
-          id,
-          session_id,
-          rater_id,
-          ratee_id,
-          overall_score,
-          communication_score,
-          knowledge_score,
-          punctuality_score,
-          comment
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?
-        )
-      `).run(
-        ratingId,
-        session_id,
-        user.user_id,
-        rateeId,
-        Number(
-          overall_score
-        ),
-        communication_score != null
-          ? Number(
-              communication_score
-            )
-          : null,
-        knowledge_score != null
-          ? Number(
-              knowledge_score
-            )
-          : null,
-        punctuality_score != null
-          ? Number(
-              punctuality_score
-            )
-          : null,
-        typeof comment === 'string'
-          ? comment.trim()
-          : ''
-      );
-
-      // -------------------------------------------------------
-      // UPDATE TRUST SCORE FROM REAL RATINGS
-      // -------------------------------------------------------
-
-      const ratingAverage =
-        db.prepare(`
-          SELECT
-            AVG(overall_score) AS avg,
-            COUNT(*) AS count
-          FROM ratings
-          WHERE ratee_id = ?
-        `).get(
-          rateeId
-        ) as any;
-
-      const average =
-        Number(
-          ratingAverage?.avg ?? 0
-        );
-
-      const trustScore =
-        average > 0
-          ? Math.round(
-              average * 20
-            )
-          : 85;
-
-      const reliability =
-        Math.min(
-          100,
-          Math.round(
-            80 +
-            (
-              Number(
-                ratingAverage?.count ?? 0
-              ) > 0
-                ? average * 4
-                : 5
-            )
-          )
-        );
-
-      db.prepare(`
-        INSERT INTO trust_scores (
-          id,
-          user_id,
-          score,
-          reliability_score,
-          verification_level,
-          updated_at
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          'COMMUNITY_VERIFIED',
-          ?
-        )
-        ON CONFLICT(user_id)
-        DO UPDATE SET
-          score =
-            excluded.score,
-          reliability_score =
-            excluded.reliability_score,
-          updated_at =
-            excluded.updated_at
-      `).run(
-        `ts-${rateeId}`,
-        rateeId,
-        trustScore,
-        reliability,
-        new Date().toISOString()
-      );
-
-      // -------------------------------------------------------
-      // NOTIFICATION
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT INTO notifications (
-          id,
-          user_id,
-          title,
-          message,
-          type,
-          link
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          'RATING_RECEIVED',
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        rateeId,
-        'New Rating Received',
-        `You received a ${overall_score}/5 rating for your LearnX session.`,
-        `/profile/${rateeId}`
-      );
-
-      db.exec('COMMIT');
-    } catch (err: any) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // Ignore rollback error.
-      }
-
-      res.status(500).json({
-        error:
-          err?.message ||
-          'Unable to submit rating.'
-      });
-      return;
-    }
-
-    res.status(201).json({
-      success: true,
-
-      rating_id:
-        ratingId
-    });
+    res.status(201)
+      .json(rating);
   }
 );
-
-// -------------------------------------------------------------
-// RECEIVED AND GIVEN RATINGS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/ratings',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
+  requireAuth,
+  async (req, res) => {
+    const userId =
+      (req.query.user_id as string) ||
+      auth(req).profile.id;
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.sessionReview.findMany(
+        {
+          where: {
+            reviewedUserId:
+              userId,
+          },
 
-    const received =
-      db.prepare(`
-        SELECT
-          r.*,
-          p.full_name AS rater_name,
-          s.skill_id,
-          sk.name AS skill_name
-        FROM ratings r
-        JOIN profiles p
-          ON p.user_id =
-             r.rater_id
-        JOIN sessions s
-          ON s.id =
-             r.session_id
-        JOIN skills sk
-          ON sk.id =
-             s.skill_id
-        WHERE r.ratee_id = ?
-        ORDER BY
-          r.created_at DESC
-      `).all(
-        user.user_id
-      );
+          include: {
+            reviewer:
+              true,
 
-    const given =
-      db.prepare(`
-        SELECT
-          r.*,
-          p.full_name AS ratee_name,
-          s.skill_id,
-          sk.name AS skill_name
-        FROM ratings r
-        JOIN profiles p
-          ON p.user_id =
-             r.ratee_id
-        JOIN sessions s
-          ON s.id =
-             r.session_id
-        JOIN skills sk
-          ON sk.id =
-             s.skill_id
-        WHERE r.rater_id = ?
-        ORDER BY
-          r.created_at DESC
-      `).all(
-        user.user_id
-      );
+            session:
+              true,
+          },
 
-    res.json({
-      received,
-      given
-    });
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
 
-// -------------------------------------------------------------
-// 8. LEARNING PROGRESS
-// -------------------------------------------------------------
+/* =========================================================
+   PROGRESS
+========================================================= */
 
 apiRouter.get(
   '/progress',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.learningProgress.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
+          },
 
-    const progress =
-      db.prepare(`
-        SELECT
-          lp.*,
-          s.name AS skill_name,
-          s.category AS skill_category
-        FROM learning_progress lp
-        JOIN skills s
-          ON s.id =
-             lp.skill_id
-        WHERE
-          lp.user_id = ?
-        ORDER BY
-          lp.updated_at DESC
-      `).all(
-        user.user_id
-      );
+          include: {
+            skill:
+              true,
+          },
 
-    // ---------------------------------------------------------
-    // REAL COMPLETED SESSIONS
-    // ---------------------------------------------------------
-
-    const sessionStats =
-      db.prepare(`
-        SELECT
-          COUNT(*) AS completed_sessions,
-          COALESCE(
-            SUM(
-              verified_duration_seconds
-            ),
-            0
-          ) AS learning_seconds
-        FROM sessions
-        WHERE
-          learner_id = ?
-          AND status = 'VERIFIED'
-      `).get(
-        user.user_id
-      ) as any;
-
-    const learningHours =
-      Number(
-        sessionStats?.learning_seconds ||
-        0
-      ) / 3600;
-
-    res.json({
-      progress,
-
-      summary: {
-        completed_sessions:
-          Number(
-            sessionStats?.completed_sessions ||
-            0
-          ),
-
-        learning_hours:
-          Math.round(
-            learningHours * 100
-          ) / 100
-      }
-    });
+          orderBy: {
+            updatedAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// SINGLE SKILL PROGRESS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/progress/:skillId',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
     const progress =
-      db.prepare(`
-        SELECT
-          lp.*,
-          s.name AS skill_name,
-          s.category,
-          s.description
-        FROM learning_progress lp
-        JOIN skills s
-          ON s.id =
-             lp.skill_id
-        WHERE
-          lp.user_id = ?
-          AND lp.skill_id = ?
-      `).get(
-        user.user_id,
-        req.params.skillId
+      await db.learningProgress.findFirst(
+        {
+          where: {
+            userId:
+              profile.id,
+
+            skillId:
+              req.params.skillId,
+          },
+
+          include: {
+            skill:
+              true,
+          },
+        }
       );
 
-    if (!progress) {
-      res.status(404).json({
-        error:
-          'No learning progress found for this skill.'
-      });
-      return;
-    }
-
-    res.json({
-      progress
-    });
+    res.json(progress);
   }
 );
 
-// -------------------------------------------------------------
-// 9. AI LEARNING PLAN
-// -------------------------------------------------------------
+/* =========================================================
+   AI LEARNING PLAN
+========================================================= */
 
 apiRouter.post(
   '/ai/learning-plan',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user = await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const {
-      skill,
-      skill_id,
-      current_level
-    } = req.body;
+      profile,
+    } =
+      auth(req);
 
-    if (!skill && !skill_id) {
-      res.status(400).json({
-        error: 'Skill or skill_id is required.'
-      });
-      return;
+    const b =
+      req.body ?? {};
+
+    const skill =
+      await db.skill.findFirst(
+        {
+          where: {
+            OR: [
+              {
+                id: String(
+                  b.skill_id ??
+                    ''
+                ),
+              },
+
+              {
+                name: {
+                  equals:
+                    String(
+                      b.skill_name ??
+                        ''
+                    ),
+
+                  mode:
+                    'insensitive',
+                },
+              },
+            ],
+          },
+        }
+      );
+
+    if (!skill) {
+      return bad(
+        res,
+        'Skill not found',
+        404
+      );
     }
 
-    let resolvedSkill = skill;
+    const plan =
+      generateStructuredLearningPlan(
+        skill.name,
+        enumValue(
+          b.level,
+          'BEGINNER'
+        )
+      );
 
-    if (skill_id && !resolvedSkill) {
-      const skillRow = db.prepare(`
-        SELECT name
-        FROM skills
-        WHERE id = ?
-      `).get(skill_id) as any;
+    const learningPath =
+      await db.learningPath.create(
+        {
+          data: {
+            userId:
+              profile.id,
 
-      resolvedSkill = skillRow?.name;
-    }
+            skillId:
+              skill.id,
 
-    if (!resolvedSkill) {
-      res.status(404).json({
-        error: 'Skill not found.'
-      });
-      return;
-    }
+            title:
+              `${skill.name} Learning Path`,
 
-    const plan = generateStructuredLearningPlan(
-      resolvedSkill,
-      current_level || 'BEGINNER'
-    );
+            description:
+              `AI-generated learning path for ${skill.name}`,
 
-    res.json({
-      success: true,
-      skill: resolvedSkill,
-      plan
+            currentLevel:
+              enumValue(
+                b.level,
+                'BEGINNER'
+              ) as any,
+
+            targetLevel:
+              enumValue(
+                b.target_level,
+                'INTERMEDIATE'
+              ) as any,
+
+            isAiGenerated:
+              true,
+          },
+        }
+      );
+
+    res.status(201).json({
+      learning_path:
+        learningPath,
+
+      plan,
     });
   }
 );
-// -------------------------------------------------------------
-// MY LEARNING PLANS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/ai/learning-plans',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.learningPath.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
+          },
 
-    const plans =
-      db.prepare(`
-        SELECT
-          lp.*,
-          s.name AS skill_name
-        FROM learning_paths lp
-        LEFT JOIN skills s
-          ON s.id =
-             lp.skill_id
-        WHERE
-          lp.user_id = ?
-        ORDER BY
-          lp.created_at DESC
-      `).all(
-        user.user_id
-      );
+          include: {
+            skill:
+              true,
 
-    const parsed =
-      plans.map(
-        (plan: any) => {
-          let planData =
-            null;
+            modules: {
+              include: {
+                lessons:
+                  true,
+              },
+            },
+          },
 
-          try {
-            planData =
-              JSON.parse(
-                plan.plan_json ||
-                  '{}'
-              );
-          } catch {
-            planData = null;
-          }
-
-          return {
-            ...plan,
-            plan:
-              planData
-          };
+          orderBy: {
+            createdAt:
+              'desc',
+          },
         }
-      );
-
-    res.json({
-      plans:
-        parsed
-    });
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// 10. AI ASSISTANT
-// -------------------------------------------------------------
 
 apiRouter.post(
   '/ai/assistant',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const {
-      message,
-      context
-    } = req.body;
-
-    if (
-      typeof message !== 'string' ||
-      !message.trim()
-    ) {
-      res.status(400).json({
-        error:
-          'Message is required.'
-      });
-      return;
-    }
-
-    const lower =
-      message
-        .trim()
-        .toLowerCase();
-
-    let response =
-      'I can help you with LearnX learning, skill sharing, sessions, Time Credits, and your learning progress.';
-
-    if (
-      lower.includes(
-        'time credit'
-      ) ||
-      lower.includes(
-        'credit'
-      )
-    ) {
-      response =
-        'Time Credits are earned by completing verified knowledge-sharing sessions. One verified hour of sharing earns one Time Credit. Time Credits are internal LearnX participation units and have no cash value.';
-    } else if (
-      lower.includes(
-        'python'
-      )
-    ) {
-      response =
-        'You can search for Python on LearnX and choose a real knowledge sharer who has Python registered as a SHARE skill.';
-    } else if (
-      lower.includes(
-        'session'
-      )
-    ) {
-      response =
-        'You can request a session with a knowledge sharer, wait for acceptance, join the session, complete the learning session, and confirm completion with the other participant.';
-    } else if (
-      lower.includes(
-        'learn'
-      )
-    ) {
-      response =
-        'LearnX lets you select skills you want to learn, create a learning plan, find knowledge sharers, schedule one-to-one sessions, and track your actual progress.';
-    } else if (
-      lower.includes(
-        'share'
-      ) ||
-      lower.includes(
-        'teach'
-      )
-    ) {
-      response =
-        'You can add skills you know as SHARE skills. Other users can then discover you and request a one-to-one knowledge-sharing session.';
-    }
-
+  requireAuth,
+  async (req, res) => {
     res.json({
-      success: true,
+      message:
+        'LearnX AI assistant request received.',
 
-      response,
-
-      context:
-        context || null
+      query:
+        req.body?.query ??
+        '',
     });
   }
 );
 
-// -------------------------------------------------------------
-// 11. QUIZZES
-// -------------------------------------------------------------
+/* =========================================================
+   QUIZZES
+========================================================= */
 
 apiRouter.get(
   '/quizzes',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const {
-      skill_id
-    } = req.query;
+  requireAuth,
+  async (req, res) => {
+    res.json(
+      await db.quiz.findMany(
+        {
+          where: {
+            isActive:
+              true,
+          },
 
-    let query = `
-      SELECT
-        q.*,
-        s.name AS skill_name
-      FROM quizzes q
-      JOIN skills s
-        ON s.id =
-           q.skill_id
-      WHERE
-        (
-          q.is_active = 1
-          OR q.is_active IS NULL
-        )
-    `;
+          include: {
+            skill:
+              true,
 
-    const params: any[] = [];
+            questions:
+              true,
+          },
 
-    if (
-      typeof skill_id === 'string' &&
-      skill_id
-    ) {
-      query += `
-        AND q.skill_id = ?
-      `;
-
-      params.push(
-        skill_id
-      );
-    }
-
-    query += `
-      ORDER BY
-        q.created_at DESC
-    `;
-
-    const quizzes =
-      db.prepare(query)
-        .all(...params);
-
-    res.json({
-      quizzes
-    });
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// GET QUIZ
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/quizzes/:id',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
-
+  requireAuth,
+  async (req, res) => {
     const quiz =
-      db.prepare(`
-        SELECT
-          q.*,
-          s.name AS skill_name
-        FROM quizzes q
-        JOIN skills s
-          ON s.id =
-             q.skill_id
-        WHERE q.id = ?
-      `).get(
-        req.params.id
-      ) as any;
-
-    if (!quiz) {
-      res.status(404).json({
-        error:
-          'Quiz not found.'
-      });
-      return;
-    }
-
-    const questions =
-      db.prepare(`
-        SELECT
-          id,
-          quiz_id,
-          question_text,
-          options_json,
-          points,
-          topic
-        FROM quiz_questions
-        WHERE quiz_id = ?
-        ORDER BY
-          question_order ASC,
-          created_at ASC
-      `).all(
-        quiz.id
-      ).map(
-        (question: any) => {
-          let options = [];
-
-          try {
-            options =
-              JSON.parse(
-                question.options_json ||
-                  '[]'
-              );
-          } catch {
-            options = [];
-          }
-
-          return {
+      await db.quiz.findUnique(
+        {
+          where: {
             id:
-              question.id,
+              req.params.id,
+          },
 
-            quiz_id:
-              question.quiz_id,
+          include: {
+            skill:
+              true,
 
-            question_text:
-              question.question_text,
-
-            options,
-
-            points:
-              question.points,
-
-            topic:
-              question.topic
-          };
+            questions: {
+              orderBy: {
+                questionOrder:
+                  'asc',
+              },
+            },
+          },
         }
       );
 
-    const previousAttempt =
-      user
-        ? db.prepare(`
-            SELECT *
-            FROM quiz_attempts
-            WHERE
-              quiz_id = ?
-              AND user_id = ?
-            ORDER BY
-              created_at DESC
-            LIMIT 1
-          `).get(
-            quiz.id,
-            user.user_id
-          )
-        : null;
+    if (!quiz) {
+      return bad(
+        res,
+        'Quiz not found',
+        404
+      );
+    }
 
-    res.json({
-      quiz,
-
-      questions,
-
-      previous_attempt:
-        previousAttempt
-    });
+    return res.json(
+      quiz
+    );
   }
 );
-
-// -------------------------------------------------------------
-// SUBMIT QUIZ
-// -------------------------------------------------------------
 
 apiRouter.post(
   '/quizzes/:id/submit',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    const b =
+      req.body ?? {};
 
     const quiz =
-      db.prepare(`
-        SELECT *
-        FROM quizzes
-        WHERE id = ?
-      `).get(
-        req.params.id
-      ) as any;
+      await db.quiz.findUnique(
+        {
+          where: {
+            id:
+              req.params.id,
+          },
+
+          include: {
+            questions:
+              true,
+          },
+        }
+      );
 
     if (!quiz) {
-      res.status(404).json({
-        error:
-          'Quiz not found.'
-      });
-      return;
+      return bad(
+        res,
+        'Quiz not found',
+        404
+      );
     }
 
-    const {
-      answers
-    } = req.body;
+    const answers =
+      Array.isArray(
+        b.answers
+      )
+        ? b.answers
+        : [];
 
-    if (
-      !answers ||
-      typeof answers !== 'object'
-    ) {
-      res.status(400).json({
-        error:
-          'Answers are required.'
-      });
-      return;
-    }
-
-    const questions =
-      db.prepare(`
-        SELECT *
-        FROM quiz_questions
-        WHERE quiz_id = ?
-        ORDER BY
-          question_order ASC,
-          created_at ASC
-      `).all(
-        quiz.id
-      ) as any[];
-
-    if (
-      questions.length === 0
-    ) {
-      res.status(400).json({
-        error:
-          'This quiz has no questions.'
-      });
-      return;
-    }
-
-    let score = 0;
-    let totalPoints = 0;
-
-    const weakTopics =
-      new Set<string>();
-
-    const strongTopics =
-      new Set<string>();
-
-    const questionResults =
-      [];
-
-    // ---------------------------------------------------------
-    // SCORE ACTUAL QUESTIONS
-    // ---------------------------------------------------------
+    let correct = 0;
 
     for (
-      const question of questions
+      const answer of answers
     ) {
-      const points =
-        Number(
-          question.points || 1
+      const question =
+        quiz.questions.find(
+          (q) =>
+            q.id ===
+            answer.question_id
         );
-
-      totalPoints +=
-        points;
-
-      const submitted =
-        answers[
-          question.id
-        ];
-
-      let correct =
-        false;
-
-      // -------------------------------------------------------
-      // Support answer stored as:
-      // correct_answer
-      // OR correct_option
-      // -------------------------------------------------------
-
-      const correctAnswer =
-        question.correct_answer ??
-        question.correct_option;
 
       if (
-        submitted != null &&
-        correctAnswer != null &&
+        question &&
         String(
-          submitted
-        ) === String(
-          correctAnswer
-        )
+          question.correctAnswer ??
+            ''
+        ).toLowerCase() ===
+          String(
+            answer.selected_answer ??
+              ''
+          ).toLowerCase()
       ) {
-        correct = true;
-
-        score +=
-          points;
+        correct++;
       }
+    }
 
-      const topic =
-        question.topic ||
-        'General';
+    const total =
+      quiz.questions.length;
 
-      if (correct) {
-        strongTopics.add(
-          topic
-        );
-      } else {
-        weakTopics.add(
-          topic
-        );
-      }
+    const score =
+      total
+        ? (correct /
+            total) *
+          100
+        : 0;
 
-      questionResults.push({
-        question_id:
-          question.id,
+    const attempt =
+      await db.quizAttempt.create(
+        {
+          data: {
+            quizId:
+              quiz.id,
+
+            userId:
+              profile.id,
+
+            score,
+
+            correctAnswers:
+              correct,
+
+            totalQuestions:
+              total,
+
+            passed:
+              score >=
+              Number(
+                quiz.passing_score
+              ),
+
+            completedAt:
+              new Date(),
+          },
+        }
+      );
+
+    res.status(201)
+      .json({
+        attempt,
+
+        score,
 
         correct,
 
-        topic,
-
-        points
+        total,
       });
-    }
-
-    const percentage =
-      totalPoints > 0
-        ? Math.round(
-            (
-              score /
-              totalPoints
-            ) * 100
-          )
-        : 0;
-
-    const passPercentage =
-      Number(
-        quiz.pass_percentage ||
-        60
-      );
-
-    const passed =
-      percentage >=
-      passPercentage;
-
-    let demonstratedLevel =
-      'BEGINNER';
-
-    if (
-      percentage >= 90
-    ) {
-      demonstratedLevel =
-        'ADVANCED';
-    } else if (
-      percentage >= 75
-    ) {
-      demonstratedLevel =
-        'INTERMEDIATE';
-    } else if (
-      percentage >= 60
-    ) {
-      demonstratedLevel =
-        'ELEMENTARY';
-    }
-
-    // ---------------------------------------------------------
-    // SAVE ATTEMPT
-    // ---------------------------------------------------------
-
-    const attemptId =
-      crypto.randomUUID();
-
-    try {
-      db.exec(
-        'BEGIN IMMEDIATE'
-      );
-
-      db.prepare(`
-        INSERT INTO quiz_attempts (
-          id,
-          quiz_id,
-          user_id,
-          score,
-          percentage,
-          passed,
-          answers_json,
-          weak_topics_json,
-          strong_topics_json,
-          demonstrated_level
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?
-        )
-      `).run(
-        attemptId,
-        quiz.id,
-        user.user_id,
-        score,
-        percentage,
-        passed ? 1 : 0,
-        JSON.stringify(
-          answers
-        ),
-        JSON.stringify(
-          Array.from(
-            weakTopics
-          )
-        ),
-        JSON.stringify(
-          Array.from(
-            strongTopics
-          )
-        ),
-        demonstratedLevel
-      );
-
-      // -------------------------------------------------------
-      // SKILL ASSESSMENT
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT INTO skill_assessments (
-          id,
-          user_id,
-          skill_id,
-          source,
-          level,
-          score,
-          assessment_reference_id
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          'AI_ASSESSED',
-          ?,
-          ?,
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        user.user_id,
-        quiz.skill_id,
-        demonstratedLevel,
-        percentage,
-        attemptId
-      );
-
-      // -------------------------------------------------------
-      // SKILLPROOF
-      // -------------------------------------------------------
-
-      if (passed) {
-        db.prepare(`
-          INSERT INTO skillproof (
-            id,
-            user_id,
-            skill_id,
-            proof_level,
-            source,
-            reference_id,
-            verified_at
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            'AI_ASSESSED',
-            'QUIZ',
-            ?,
-            ?
-          )
-          ON CONFLICT(
-            user_id,
-            skill_id,
-            proof_level
-          )
-          DO UPDATE SET
-            reference_id =
-              excluded.reference_id,
-            verified_at =
-              excluded.verified_at
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          quiz.skill_id,
-          attemptId,
-          new Date().toISOString()
-        );
-      }
-
-      // -------------------------------------------------------
-      // UPDATE LEARNING PROGRESS
-      // -------------------------------------------------------
-
-      const existingProgress =
-        db.prepare(`
-          SELECT *
-          FROM learning_progress
-          WHERE
-            user_id = ?
-            AND skill_id = ?
-        `).get(
-          user.user_id,
-          quiz.skill_id
-        ) as any;
-
-      const progressIncrease =
-        passed
-          ? 5
-          : 2;
-
-      if (existingProgress) {
-        const newProgress =
-          Math.min(
-            100,
-            Number(
-              existingProgress.progress_percentage ||
-              0
-            ) +
-              progressIncrease
-          );
-
-        db.prepare(`
-          UPDATE learning_progress
-          SET
-            progress_percentage = ?,
-            updated_at = ?
-          WHERE
-            user_id = ?
-            AND skill_id = ?
-        `).run(
-          newProgress,
-          new Date().toISOString(),
-          user.user_id,
-          quiz.skill_id
-        );
-      } else {
-        db.prepare(`
-          INSERT INTO learning_progress (
-            id,
-            user_id,
-            skill_id,
-            progress_percentage,
-            learning_hours
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            ?,
-            0
-          )
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          quiz.skill_id,
-          progressIncrease,
-        );
-      }
-
-      // -------------------------------------------------------
-      // NOTIFICATION
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT INTO notifications (
-          id,
-          user_id,
-          title,
-          message,
-          type,
-          link
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          'QUIZ_RESULT',
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        user.user_id,
-        passed
-          ? 'Quiz Passed'
-          : 'Quiz Completed',
-        `You scored ${percentage}% in the ${quiz.title || 'skill'} quiz.`,
-        `/quizzes/${quiz.id}`
-      );
-
-      db.exec('COMMIT');
-    } catch (err: any) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // Ignore rollback errors.
-      }
-
-      res.status(500).json({
-        error:
-          err?.message ||
-          'Unable to submit quiz.'
-      });
-      return;
-    }
-
-    res.json({
-      success: true,
-
-      attempt_id:
-        attemptId,
-
-      score,
-
-      total_points:
-        totalPoints,
-
-      percentage,
-
-      passed,
-
-      demonstrated_level:
-        demonstratedLevel,
-
-      weak_topics:
-        Array.from(
-          weakTopics
-        ),
-
-      strong_topics:
-        Array.from(
-          strongTopics
-        ),
-
-      question_results:
-        questionResults
-    });
   }
 );
-
-// -------------------------------------------------------------
-// MY QUIZ ATTEMPTS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/v1/me/quiz-attempts',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.quizAttempt.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
+          },
 
-    const attempts =
-      db.prepare(`
-        SELECT
-          qa.*,
-          q.title AS quiz_title,
-          q.skill_id,
-          s.name AS skill_name
-        FROM quiz_attempts qa
-        JOIN quizzes q
-          ON q.id =
-             qa.quiz_id
-        JOIN skills s
-          ON s.id =
-             q.skill_id
-        WHERE
-          qa.user_id = ?
-        ORDER BY
-          qa.created_at DESC
-      `).all(
-        user.user_id
-      );
+          include: {
+            quiz:
+              true,
+          },
 
-    res.json({
-      attempts
-    });
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// MY SKILL ASSESSMENTS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/v1/me/skill-assessments',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(
-        req
-      );
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.skillProof.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
+          },
 
-    const assessments =
-      db.prepare(`
-        SELECT
-          sa.*,
-          s.name AS skill_name
-        FROM skill_assessments sa
-        JOIN skills s
-          ON s.id =
-             sa.skill_id
-        WHERE
-          sa.user_id = ?
-        ORDER BY
-          sa.created_at DESC
-      `).all(
-        user.user_id
-      );
+          include: {
+            skill:
+              true,
+          },
 
-    res.json({
-      assessments
-    });
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
-// -------------------------------------------------------------
-// 12. ACHIEVEMENTS
-// -------------------------------------------------------------
+
+/* =========================================================
+   ACHIEVEMENTS / SKILL PROOF
+========================================================= */
 
 apiRouter.get(
   '/achievements',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.achievement.findMany(
+        {
+          where: {
+            isActive:
+              true,
+          },
 
-    const achievements =
-      db.prepare(`
-        SELECT *
-        FROM achievements
-        WHERE user_id = ?
-        ORDER BY created_at DESC
-      `).all(user.user_id);
-
-    res.json({
-      achievements
-    });
+          include: {
+            userAchievements: {
+              where: {
+                userId:
+                  profile.id,
+              },
+            },
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// 13. SKILLPROOF
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/skillproof',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.skillProof.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
+          },
 
-    const proofs =
-      db.prepare(`
-        SELECT
-          sp.*,
-          s.name AS skill_name,
-          s.category AS skill_category
-        FROM skillproof sp
-        JOIN skills s
-          ON s.id = sp.skill_id
-        WHERE sp.user_id = ?
-        ORDER BY
-          sp.verified_at DESC,
-          sp.created_at DESC
-      `).all(user.user_id);
+          include: {
+            skill:
+              true,
+          },
 
-    res.json({
-      skillproof: proofs
-    });
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// SKILLPROOF BY SKILL
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/skillproof/:skillId',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.skillProof.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
 
-    const proofs =
-      db.prepare(`
-        SELECT
-          sp.*,
-          s.name AS skill_name,
-          s.category AS skill_category
-        FROM skillproof sp
-        JOIN skills s
-          ON s.id = sp.skill_id
-        WHERE
-          sp.user_id = ?
-          AND sp.skill_id = ?
-        ORDER BY
-          sp.verified_at DESC
-      `).all(
-        user.user_id,
-        req.params.skillId
-      );
+            skillId:
+              req.params.skillId,
+          },
 
-    res.json({
-      skillproof: proofs
-    });
+          include: {
+            skill:
+              true,
+          },
+        }
+      )
+    );
   }
 );
 
-// -------------------------------------------------------------
-// 14. PARTNERS
-// -------------------------------------------------------------
+/* =========================================================
+   PARTNERS
+========================================================= */
 
 apiRouter.get(
   '/partners',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const partners =
-      db.prepare(`
-        SELECT *
-        FROM partners
-        WHERE
-          is_active = 1
-          OR is_active IS NULL
-        ORDER BY
-          created_at DESC
-      `).all();
+  async (_req, res) => {
+    res.json(
+      await db.partner.findMany(
+        {
+          where: {
+            status:
+              'APPROVED',
+          },
 
-    res.json({
-      partners
-    });
+          include: {
+            programs: {
+              where: {
+                status:
+                  'PUBLISHED',
+              },
+
+              include: {
+                skill:
+                  true,
+              },
+            },
+          },
+
+          orderBy: {
+            organizationName:
+              'asc',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// CREATE PARTNER
-// ADMIN ONLY
-// -------------------------------------------------------------
 
 apiRouter.post(
   '/partners',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAdmin,
+  async (req, res) => {
+    const b =
+      req.body ?? {};
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    const partner =
+      await db.partner.create(
+        {
+          data: {
+            organizationName:
+              b.organization_name,
 
-    if (user.role !== 'ADMIN') {
-      res.status(403).json({
-        error: 'Admin access required.'
-      });
-      return;
-    }
+            description:
+              b.description ??
+              null,
 
-    const {
-      name,
-      description,
-      website,
-      logo_url,
-      contact_email
-    } = req.body;
+            websiteUrl:
+              b.website_url ??
+              null,
 
-    if (
-      typeof name !== 'string' ||
-      !name.trim()
-    ) {
-      res.status(400).json({
-        error: 'Partner name is required.'
-      });
-      return;
-    }
+            logoUrl:
+              b.logo_url ??
+              null,
 
-    const partnerId =
-      crypto.randomUUID();
+            contactEmail:
+              b.contact_email ??
+              null,
+          },
+        }
+      );
 
-    db.prepare(`
-      INSERT INTO partners (
-        id,
-        name,
-        description,
-        website,
-        logo_url,
-        contact_email,
-        is_active
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        1
-      )
-    `).run(
-      partnerId,
-      name.trim(),
-      description || '',
-      website || '',
-      logo_url || '',
-      contact_email || ''
-    );
-
-    res.status(201).json({
-      success: true,
-      partner_id: partnerId
-    });
+    res.status(201)
+      .json(partner);
   }
 );
 
-// -------------------------------------------------------------
-// 15. COURSES
-// -------------------------------------------------------------
+/* =========================================================
+   COURSES / BOOTCAMPS
+========================================================= */
+
+async function programs(
+  req: Request,
+  res: Response,
+  type:
+    | 'COURSE'
+    | 'BOOTCAMP'
+) {
+  res.json(
+    await db.partnerProgram.findMany(
+      {
+        where: {
+          programType:
+            type as any,
+
+          status:
+            'PUBLISHED',
+        },
+
+        include: {
+          partner:
+            true,
+
+          skill:
+            true,
+        },
+
+        orderBy: {
+          startDate:
+            'asc',
+        },
+      }
+    )
+  );
+}
 
 apiRouter.get(
   '/courses',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const {
-      skill_id,
-      partner_id
-    } = req.query;
-
-    let query = `
-      SELECT
-        c.*,
-        p.name AS partner_name,
-        s.name AS skill_name
-      FROM courses c
-      LEFT JOIN partners p
-        ON p.id = c.partner_id
-      LEFT JOIN skills s
-        ON s.id = c.skill_id
-      WHERE
-        (
-          c.is_active = 1
-          OR c.is_active IS NULL
-        )
-    `;
-
-    const params: any[] = [];
-
-    if (
-      typeof skill_id === 'string' &&
-      skill_id
-    ) {
-      query += `
-        AND c.skill_id = ?
-      `;
-
-      params.push(skill_id);
-    }
-
-    if (
-      typeof partner_id === 'string' &&
-      partner_id
-    ) {
-      query += `
-        AND c.partner_id = ?
-      `;
-
-      params.push(partner_id);
-    }
-
-    query += `
-      ORDER BY
-        c.created_at DESC
-    `;
-
-    const courses =
-      db.prepare(query).all(
-        ...params
-      );
-
-    res.json({
-      courses
-    });
-  }
+  (req, res) =>
+    programs(
+      req,
+      res,
+      'COURSE'
+    )
 );
-
-// -------------------------------------------------------------
-// SINGLE COURSE
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/courses/:id',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const course =
-      db.prepare(`
-        SELECT
-          c.*,
-          p.name AS partner_name,
-          p.logo_url AS partner_logo,
-          s.name AS skill_name
-        FROM courses c
-        LEFT JOIN partners p
-          ON p.id = c.partner_id
-        LEFT JOIN skills s
-          ON s.id = c.skill_id
-        WHERE c.id = ?
-      `).get(
-        req.params.id
-      ) as any;
-
-    if (!course) {
-      res.status(404).json({
-        error: 'Course not found.'
-      });
-      return;
-    }
-
-    res.json({
-      course
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// CREATE COURSE
-// ADMIN ONLY
-// -------------------------------------------------------------
-
-apiRouter.post(
-  '/courses',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    if (user.role !== 'ADMIN') {
-      res.status(403).json({
-        error: 'Admin access required.'
-      });
-      return;
-    }
-
-    const {
-      partner_id,
-      skill_id,
-      title,
-      description,
-      level,
-      duration_hours,
-      course_url,
-      certificate_available,
-      credit_cost
-    } = req.body;
-
-    if (
-      typeof title !== 'string' ||
-      !title.trim()
-    ) {
-      res.status(400).json({
-        error: 'Course title is required.'
-      });
-      return;
-    }
-
-    if (
-      partner_id
-    ) {
-      const partner =
-        db.prepare(`
-          SELECT id
-          FROM partners
-          WHERE id = ?
-        `).get(partner_id);
-
-      if (!partner) {
-        res.status(400).json({
-          error: 'Partner not found.'
-        });
-        return;
-      }
-    }
-
-    if (
-      skill_id
-    ) {
-      const skill =
-        db.prepare(`
-          SELECT id
-          FROM skills
-          WHERE id = ?
-        `).get(skill_id);
-
-      if (!skill) {
-        res.status(400).json({
-          error: 'Skill not found.'
-        });
-        return;
-      }
-    }
-
-    const courseId =
-      crypto.randomUUID();
-
-    db.prepare(`
-      INSERT INTO courses (
-        id,
-        partner_id,
-        skill_id,
-        title,
-        description,
-        level,
-        duration_hours,
-        course_url,
-        certificate_available,
-        credit_cost,
-        is_active
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        1
-      )
-    `).run(
-      courseId,
-      partner_id || null,
-      skill_id || null,
-      title.trim(),
-      description || '',
-      level || 'BEGINNER',
-      Number(duration_hours || 0),
-      course_url || '',
-      certificate_available ? 1 : 0,
-      Math.max(
-        0,
-        Number(credit_cost || 0)
-      )
-    );
-
-    res.status(201).json({
-      success: true,
-      course_id: courseId
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// 16. COURSE ENROLLMENT
-// -------------------------------------------------------------
-
-apiRouter.post(
-  '/courses/:id/enroll',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const course =
-      db.prepare(`
-        SELECT *
-        FROM courses
-        WHERE id = ?
-      `).get(
-        req.params.id
-      ) as any;
-
-    if (!course) {
-      res.status(404).json({
-        error: 'Course not found.'
-      });
-      return;
-    }
-
-    const existing =
-      db.prepare(`
-        SELECT *
-        FROM course_enrollments
-        WHERE
-          course_id = ?
-          AND user_id = ?
-      `).get(
-        course.id,
-        user.user_id
-      ) as any;
-
-    if (existing) {
-      res.json({
-        success: true,
-        already_enrolled: true,
-        enrollment: existing
-      });
-      return;
-    }
-
-    const creditCost =
-      Math.max(
-        0,
-        Number(
-          course.credit_cost || 0
-        )
-      );
-
-    if (creditCost > 0) {
-      const wallet =
-        db.prepare(`
-          SELECT *
-          FROM time_credit_accounts
-          WHERE user_id = ?
-        `).get(
-          user.user_id
-        ) as any;
-
-      const balance =
-        Number(
-          wallet?.balance || 0
-        );
-
-      if (
-        balance <
-        creditCost
-      ) {
-        res.status(400).json({
-          error:
-            'Insufficient Time Credits.'
-        });
-        return;
-      }
-    }
-
-    const enrollmentId =
-      crypto.randomUUID();
-
-    try {
-      db.exec(
-        'BEGIN IMMEDIATE'
-      );
-
-      // -------------------------------------------------------
-      // ENSURE WALLET EXISTS
-      // -------------------------------------------------------
-
-      db.prepare(`
-        INSERT OR IGNORE INTO time_credit_accounts (
-          id,
-          user_id,
-          balance,
-          total_earned,
-          total_spent
-        )
-        VALUES (
-          ?,
-          ?,
-          0,
-          0,
-          0
-        )
-      `).run(
-        `tc-${user.user_id}`,
-        user.user_id
-      );
-
-      const wallet =
-        db.prepare(`
-          SELECT balance
-          FROM time_credit_accounts
-          WHERE user_id = ?
-        `).get(
-          user.user_id
-        ) as any;
-
-      if (
-        creditCost >
-        Number(
-          wallet?.balance || 0
-        )
-      ) {
-        db.exec('ROLLBACK');
-
-        res.status(400).json({
-          error:
-            'Insufficient Time Credits.'
-        });
-        return;
-      }
-
-      // -------------------------------------------------------
-      // SPEND CREDITS ONLY IF COURSE REQUIRES THEM
-      // -------------------------------------------------------
-
-      if (
-        creditCost > 0
-      ) {
-        const transactionId =
-          crypto.randomUUID();
-
-        db.prepare(`
-          UPDATE time_credit_accounts
-          SET
-            balance =
-              balance - ?,
-            total_spent =
-              total_spent + ?,
-            updated_at = ?
-          WHERE
-            user_id = ?
-            AND balance >= ?
-        `).run(
-          creditCost,
-          creditCost,
-          new Date().toISOString(),
-          user.user_id,
-          creditCost
-        );
-
-        db.prepare(`
-          INSERT INTO credit_transactions (
-            id,
-            user_id,
-            amount,
-            transaction_type,
-            status,
-            description,
-            reference_id
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            'COURSE_ENROLLMENT',
-            'COMPLETED',
-            ?,
-            ?
-          )
-        `).run(
-          transactionId,
-          user.user_id,
-          -creditCost,
-          `Course enrollment: ${course.title}`,
-          course.id
-        );
-      }
-
-      db.prepare(`
-        INSERT INTO course_enrollments (
-          id,
-          course_id,
-          user_id,
-          progress_percentage,
-          status,
-          enrolled_at
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          0,
-          'ENROLLED',
-          ?
-        )
-      `).run(
-        enrollmentId,
-        course.id,
-        user.user_id,
-        new Date().toISOString()
-      );
-
-      db.prepare(`
-        INSERT INTO notifications (
-          id,
-          user_id,
-          title,
-          message,
-          type,
-          link
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          'COURSE_ENROLLED',
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        user.user_id,
-        'Course Enrollment Successful',
-        `You are enrolled in ${course.title}.`,
-        `/courses/${course.id}`
-      );
-
-      db.exec('COMMIT');
-    } catch (err: any) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // Ignore rollback error.
-      }
-
-      res.status(500).json({
-        error:
-          err?.message ||
-          'Unable to enroll in course.'
-      });
-      return;
-    }
-
-    const enrollment =
-      db.prepare(`
-        SELECT *
-        FROM course_enrollments
-        WHERE id = ?
-      `).get(
-        enrollmentId
-      );
-
-    res.status(201).json({
-      success: true,
-      enrollment
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// MY COURSES
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/my-courses',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const courses =
-      db.prepare(`
-        SELECT
-          ce.*,
-          c.title,
-          c.description,
-          c.level,
-          c.duration_hours,
-          c.course_url,
-          c.certificate_available,
-          c.credit_cost,
-          p.name AS partner_name,
-          s.name AS skill_name
-        FROM course_enrollments ce
-        JOIN courses c
-          ON c.id = ce.course_id
-        LEFT JOIN partners p
-          ON p.id = c.partner_id
-        LEFT JOIN skills s
-          ON s.id = c.skill_id
-        WHERE
-          ce.user_id = ?
-        ORDER BY
-          ce.enrolled_at DESC
-      `).all(
-        user.user_id
-      );
-
-    res.json({
-      courses
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// COURSE PROGRESS
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/courses/:id/progress',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const enrollment =
-      db.prepare(`
-        SELECT
-          ce.*,
-          c.title,
-          c.certificate_available,
-          c.skill_id
-        FROM course_enrollments ce
-        JOIN courses c
-          ON c.id = ce.course_id
-        WHERE
-          ce.course_id = ?
-          AND ce.user_id = ?
-      `).get(
-        req.params.id,
-        user.user_id
-      ) as any;
-
-    if (!enrollment) {
-      res.status(404).json({
-        error:
-          'Course enrollment not found.'
-      });
-      return;
-    }
-
-    res.json({
-      enrollment
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// UPDATE COURSE PROGRESS
-// -------------------------------------------------------------
-
-apiRouter.put(
-  '/courses/:id/progress',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const enrollment =
-      db.prepare(`
-        SELECT
-          ce.*,
-          c.title,
-          c.certificate_available,
-          c.skill_id
-        FROM course_enrollments ce
-        JOIN courses c
-          ON c.id = ce.course_id
-        WHERE
-          ce.course_id = ?
-          AND ce.user_id = ?
-      `).get(
-        req.params.id,
-        user.user_id
-      ) as any;
-
-    if (!enrollment) {
-      res.status(404).json({
-        error:
-          'Course enrollment not found.'
-      });
-      return;
-    }
-
-    const requestedProgress =
-      Number(
-        req.body?.progress_percentage
-      );
-
-    if (
-      !Number.isFinite(
-        requestedProgress
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'progress_percentage is required.'
-      });
-      return;
-    }
-
-    const progress =
-      Math.max(
-        0,
-        Math.min(
-          100,
-          requestedProgress
-        )
-      );
-
-    const status =
-      progress >= 100
-        ? 'COMPLETED'
-        : 'IN_PROGRESS';
-
-    db.prepare(`
-      UPDATE course_enrollments
-      SET
-        progress_percentage = ?,
-        status = ?,
-        completed_at =
-          CASE
-            WHEN ? >= 100
-            THEN ?
-            ELSE completed_at
-          END
-      WHERE
-        course_id = ?
-        AND user_id = ?
-    `).run(
-      progress,
-      status,
-      progress,
-      new Date().toISOString(),
-      req.params.id,
-      user.user_id
-    );
-
-    // ---------------------------------------------------------
-    // CERTIFICATE
-    // ---------------------------------------------------------
-
-    if (
-      progress >= 100 &&
-      enrollment.certificate_available
-    ) {
-      const existingCertificate =
-        db.prepare(`
-          SELECT id
-          FROM certificates
-          WHERE
-            course_id = ?
-            AND user_id = ?
-        `).get(
-          req.params.id,
-          user.user_id
-        );
-
-      if (!existingCertificate) {
-        const certificateId =
-          crypto.randomUUID();
-
-        const certificateNumber =
-          `LX-${new Date()
-            .getFullYear()}-${certificateId
-            .replace(/-/g, '')
-            .slice(0, 10)
-            .toUpperCase()}`;
-
-        db.prepare(`
-          INSERT INTO certificates (
-            id,
-            user_id,
-            course_id,
-            certificate_number,
-            issued_at,
-            verification_code
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?
-          )
-        `).run(
-          certificateId,
-          user.user_id,
-          req.params.id,
-          certificateNumber,
-          new Date().toISOString(),
-          certificateId
-        );
-      }
-    }
-
-    const updated =
-      db.prepare(`
-        SELECT *
-        FROM course_enrollments
-        WHERE
-          course_id = ?
-          AND user_id = ?
-      `).get(
-        req.params.id,
-        user.user_id
-      );
-
-    res.json({
-      success: true,
-      enrollment: updated
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// 17. COURSE NOTES
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/courses/:id/notes',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const enrollment =
-      db.prepare(`
-        SELECT id
-        FROM course_enrollments
-        WHERE
-          course_id = ?
-          AND user_id = ?
-      `).get(
-        req.params.id,
-        user.user_id
-      );
-
-    if (!enrollment) {
-      res.status(403).json({
-        error:
-          'You are not enrolled in this course.'
-      });
-      return;
-    }
-
-    const notes =
-      db.prepare(`
-        SELECT *
-        FROM course_notes
-        WHERE
-          course_id = ?
-          AND user_id = ?
-        ORDER BY
-          updated_at DESC
-      `).all(
-        req.params.id,
-        user.user_id
-      );
-
-    res.json({
-      notes
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// SAVE COURSE NOTE
-// -------------------------------------------------------------
-
-apiRouter.post(
-  '/courses/:id/notes',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const enrollment =
-      db.prepare(`
-        SELECT id
-        FROM course_enrollments
-        WHERE
-          course_id = ?
-          AND user_id = ?
-      `).get(
-        req.params.id,
-        user.user_id
-      );
-
-    if (!enrollment) {
-      res.status(403).json({
-        error:
-          'You are not enrolled in this course.'
-      });
-      return;
-    }
-
-    const {
-      title,
-      content
-    } = req.body;
-
-    if (
-      typeof content !== 'string' ||
-      !content.trim()
-    ) {
-      res.status(400).json({
-        error:
-          'Note content is required.'
-      });
-      return;
-    }
-
-    const noteId =
-      crypto.randomUUID();
-
-    db.prepare(`
-      INSERT INTO course_notes (
-        id,
-        course_id,
-        user_id,
-        title,
-        content
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        ?
-      )
-    `).run(
-      noteId,
-      req.params.id,
-      user.user_id,
-      title || 'My Note',
-      content.trim()
-    );
-
-    const note =
-      db.prepare(`
-        SELECT *
-        FROM course_notes
-        WHERE id = ?
-      `).get(noteId);
-
-    res.status(201).json({
-      success: true,
-      note
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// UPDATE COURSE NOTE
-// -------------------------------------------------------------
-
-apiRouter.put(
-  '/courses/:id/notes/:noteId',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const note =
-      db.prepare(`
-        SELECT *
-        FROM course_notes
-        WHERE
-          id = ?
-          AND course_id = ?
-          AND user_id = ?
-      `).get(
-        req.params.noteId,
-        req.params.id,
-        user.user_id
-      ) as any;
-
-    if (!note) {
-      res.status(404).json({
-        error: 'Note not found.'
-      });
-      return;
-    }
-
-    const {
-      title,
-      content
-    } = req.body;
-
-    db.prepare(`
-      UPDATE course_notes
-      SET
-        title = ?,
-        content = ?,
-        updated_at = ?
-      WHERE id = ?
-    `).run(
-      typeof title === 'string'
-        ? title
-        : note.title,
-      typeof content === 'string'
-        ? content
-        : note.content,
-      new Date().toISOString(),
-      note.id
-    );
-
-    const updated =
-      db.prepare(`
-        SELECT *
-        FROM course_notes
-        WHERE id = ?
-      `).get(
-        note.id
-      );
-
-    res.json({
-      success: true,
-      note: updated
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// 18. BOOTCAMPS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/bootcamps',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const bootcamps =
-      db.prepare(`
-        SELECT
-          b.*,
-          p.name AS partner_name,
-          s.name AS skill_name
-        FROM bootcamps b
-        LEFT JOIN partners p
-          ON p.id = b.partner_id
-        LEFT JOIN skills s
-          ON s.id = b.skill_id
-        WHERE
-          (
-            b.is_active = 1
-            OR b.is_active IS NULL
-          )
-        ORDER BY
-          b.created_at DESC
-      `).all();
-
-    res.json({
-      bootcamps
-    });
-  }
+  (req, res) =>
+    programs(
+      req,
+      res,
+      'BOOTCAMP'
+    )
 );
 
-// -------------------------------------------------------------
-// BOOTCAMP DETAILS
-// -------------------------------------------------------------
+apiRouter.get(
+  '/courses/:id',
+  async (req, res) => {
+    const program =
+      await db.partnerProgram.findUnique(
+        {
+          where: {
+            id:
+              req.params.id,
+          },
+
+          include: {
+            partner:
+              true,
+
+            skill:
+              true,
+
+            enrollments:
+              true,
+          },
+        }
+      );
+
+    if (!program) {
+      return bad(
+        res,
+        'Course not found',
+        404
+      );
+    }
+
+    return res.json(
+      program
+    );
+  }
+);
 
 apiRouter.get(
   '/bootcamps/:id',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const bootcamp =
-      db.prepare(`
-        SELECT
-          b.*,
-          p.name AS partner_name,
-          s.name AS skill_name
-        FROM bootcamps b
-        LEFT JOIN partners p
-          ON p.id = b.partner_id
-        LEFT JOIN skills s
-          ON s.id = b.skill_id
-        WHERE b.id = ?
-      `).get(
-        req.params.id
-      ) as any;
+  async (req, res) => {
+    const program =
+      await db.partnerProgram.findUnique(
+        {
+          where: {
+            id:
+              req.params.id,
+          },
 
-    if (!bootcamp) {
-      res.status(404).json({
-        error:
-          'Bootcamp not found.'
-      });
-      return;
+          include: {
+            partner:
+              true,
+
+            skill:
+              true,
+
+            enrollments:
+              true,
+          },
+        }
+      );
+
+    if (!program) {
+      return bad(
+        res,
+        'Bootcamp not found',
+        404
+      );
     }
 
-    res.json({
-      bootcamp
-    });
+    return res.json(
+      program
+    );
   }
 );
 
-// -------------------------------------------------------------
-// BOOTCAMP ENROLLMENT
-// -------------------------------------------------------------
+apiRouter.post(
+  '/courses',
+  requireAdmin,
+  async (req, res) => {
+    const b =
+      req.body ?? {};
+
+    const course =
+      await db.partnerProgram.create(
+        {
+          data: {
+            partnerId:
+              b.partner_id,
+
+            skillId:
+              b.skill_id ??
+              null,
+
+            title:
+              b.title,
+
+            description:
+              b.description ??
+              null,
+
+            programType:
+              'COURSE',
+
+            level:
+              enumValue(
+                b.level,
+                'BEGINNER'
+              ) as any,
+
+            language:
+              b.language ??
+              'English',
+
+            durationHours:
+              b.duration_hours ??
+              null,
+
+            externalUrl:
+              b.external_url ??
+              null,
+
+            certificateAvailable:
+              Boolean(
+                b.certificate_available
+              ),
+
+            creditRequired:
+              Number(
+                b.credit_required ??
+                  0
+              ),
+
+            status:
+              enumValue(
+                b.status,
+                'DRAFT'
+              ) as any,
+          },
+        }
+      );
+
+    res.status(201)
+      .json(course);
+  }
+);
+
+async function enroll(
+  req: Request,
+  res: Response
+) {
+  const {
+    profile,
+  } =
+    auth(req);
+
+  const program =
+    await db.partnerProgram.findUnique(
+      {
+        where: {
+          id:
+            req.params.id,
+        },
+      }
+    );
+
+  if (!program) {
+    return bad(
+      res,
+      'Program not found',
+      404
+    );
+  }
+
+  const enrollment =
+    await db.programEnrollment.upsert(
+      {
+        where: {
+          programId_userId:
+            {
+              programId:
+                program.id,
+
+              userId:
+                profile.id,
+            },
+        },
+
+        create: {
+          programId:
+            program.id,
+
+          userId:
+            profile.id,
+        },
+
+        update: {
+          status:
+            'ENROLLED',
+        },
+      }
+    );
+
+  res.status(201)
+    .json(enrollment);
+}
+
+apiRouter.post(
+  '/courses/:id/enroll',
+  requireAuth,
+  enroll
+);
 
 apiRouter.post(
   '/bootcamps/:id/enroll',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    const bootcamp =
-      db.prepare(`
-        SELECT *
-        FROM bootcamps
-        WHERE id = ?
-      `).get(
-        req.params.id
-      ) as any;
-
-    if (!bootcamp) {
-      res.status(404).json({
-        error:
-          'Bootcamp not found.'
-      });
-      return;
-    }
-
-    const existing =
-      db.prepare(`
-        SELECT *
-        FROM bootcamp_enrollments
-        WHERE
-          bootcamp_id = ?
-          AND user_id = ?
-      `).get(
-        bootcamp.id,
-        user.user_id
-      ) as any;
-
-    if (existing) {
-      res.json({
-        success: true,
-        already_enrolled: true,
-        enrollment: existing
-      });
-      return;
-    }
-
-    const creditCost =
-      Math.max(
-        0,
-        Number(
-          bootcamp.credit_cost || 0
-        )
-      );
-
-    const enrollmentId =
-      crypto.randomUUID();
-
-    try {
-      db.exec(
-        'BEGIN IMMEDIATE'
-      );
-
-      db.prepare(`
-        INSERT OR IGNORE INTO time_credit_accounts (
-          id,
-          user_id,
-          balance,
-          total_earned,
-          total_spent
-        )
-        VALUES (
-          ?,
-          ?,
-          0,
-          0,
-          0
-        )
-      `).run(
-        `tc-${user.user_id}`,
-        user.user_id
-      );
-
-      const wallet =
-        db.prepare(`
-          SELECT balance
-          FROM time_credit_accounts
-          WHERE user_id = ?
-        `).get(
-          user.user_id
-        ) as any;
-
-      const balance =
-        Number(
-          wallet?.balance || 0
-        );
-
-      if (
-        creditCost >
-        balance
-      ) {
-        db.exec('ROLLBACK');
-
-        res.status(400).json({
-          error:
-            'Insufficient Time Credits.'
-        });
-        return;
-      }
-
-      if (
-        creditCost > 0
-      ) {
-        db.prepare(`
-          UPDATE time_credit_accounts
-          SET
-            balance =
-              balance - ?,
-            total_spent =
-              total_spent + ?,
-            updated_at = ?
-          WHERE
-            user_id = ?
-            AND balance >= ?
-        `).run(
-          creditCost,
-          creditCost,
-          new Date().toISOString(),
-          user.user_id,
-          creditCost
-        );
-
-        db.prepare(`
-          INSERT INTO credit_transactions (
-            id,
-            user_id,
-            amount,
-            transaction_type,
-            status,
-            description,
-            reference_id
-          )
-          VALUES (
-            ?,
-            ?,
-            ?,
-            'BOOTCAMP_ENROLLMENT',
-            'COMPLETED',
-            ?,
-            ?
-          )
-        `).run(
-          crypto.randomUUID(),
-          user.user_id,
-          -creditCost,
-          `Bootcamp enrollment: ${bootcamp.title}`,
-          bootcamp.id
-        );
-      }
-
-      db.prepare(`
-        INSERT INTO bootcamp_enrollments (
-          id,
-          bootcamp_id,
-          user_id,
-          progress_percentage,
-          status,
-          enrolled_at
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          0,
-          'ENROLLED',
-          ?
-        )
-      `).run(
-        enrollmentId,
-        bootcamp.id,
-        user.user_id,
-        new Date().toISOString()
-      );
-
-      db.prepare(`
-        INSERT INTO notifications (
-          id,
-          user_id,
-          title,
-          message,
-          type,
-          link
-        )
-        VALUES (
-          ?,
-          ?,
-          ?,
-          ?,
-          'BOOTCAMP_ENROLLED',
-          ?
-        )
-      `).run(
-        crypto.randomUUID(),
-        user.user_id,
-        'Bootcamp Enrollment Successful',
-        `You are enrolled in ${bootcamp.title}.`,
-        `/bootcamps/${bootcamp.id}`
-      );
-
-      db.exec('COMMIT');
-    } catch (err: any) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // Ignore rollback error.
-      }
-
-      res.status(500).json({
-        error:
-          err?.message ||
-          'Unable to enroll in bootcamp.'
-      });
-      return;
-    }
-
-    const enrollment =
-      db.prepare(`
-        SELECT *
-        FROM bootcamp_enrollments
-        WHERE id = ?
-      `).get(
-        enrollmentId
-      );
-
-    res.status(201).json({
-      success: true,
-      enrollment
-    });
-  }
+  requireAuth,
+  enroll
 );
 
-// -------------------------------------------------------------
-// MY BOOTCAMPS
-// -------------------------------------------------------------
+apiRouter.get(
+  '/my-courses',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
+
+    res.json(
+      await db.programEnrollment.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
+
+            program: {
+              programType:
+                'COURSE',
+            },
+          },
+
+          include: {
+            program: {
+              include: {
+                partner:
+                  true,
+
+                skill:
+                  true,
+              },
+            },
+          },
+
+          orderBy: {
+            enrolledAt:
+              'desc',
+          },
+        }
+      )
+    );
+  }
+);
 
 apiRouter.get(
   '/my-bootcamps',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.programEnrollment.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
 
-    const bootcamps =
-      db.prepare(`
-        SELECT
-          be.*,
-          b.title,
-          b.description,
-          b.level,
-          b.duration_hours,
-          b.start_date,
-          b.end_date,
-          b.credit_cost,
-          p.name AS partner_name,
-          s.name AS skill_name
-        FROM bootcamp_enrollments be
-        JOIN bootcamps b
-          ON b.id = be.bootcamp_id
-        LEFT JOIN partners p
-          ON p.id = b.partner_id
-        LEFT JOIN skills s
-          ON s.id = b.skill_id
-        WHERE
-          be.user_id = ?
-        ORDER BY
-          be.enrolled_at DESC
-      `).all(
-        user.user_id
-      );
+            program: {
+              programType:
+                'BOOTCAMP',
+            },
+          },
 
-    res.json({
-      bootcamps
-    });
+          include: {
+            program: {
+              include: {
+                partner:
+                  true,
+
+                skill:
+                  true,
+              },
+            },
+          },
+
+          orderBy: {
+            enrolledAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// 19. CERTIFICATES
-// -------------------------------------------------------------
 
 apiRouter.get(
-  '/certificates',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  '/courses/:id/progress',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.programEnrollment.findUnique(
+        {
+          where: {
+            programId_userId:
+              {
+                programId:
+                  req.params.id,
 
-    const certificates =
-      db.prepare(`
-        SELECT
-          c.*,
-          co.title AS course_title,
-          p.name AS partner_name,
-          s.name AS skill_name
-        FROM certificates c
-        LEFT JOIN courses co
-          ON co.id = c.course_id
-        LEFT JOIN partners p
-          ON p.id = co.partner_id
-        LEFT JOIN skills s
-          ON s.id = co.skill_id
-        WHERE
-          c.user_id = ?
-        ORDER BY
-          c.issued_at DESC
-      `).all(
-        user.user_id
+                userId:
+                  profile.id,
+              },
+          },
+        }
+      )
+    );
+  }
+);
+
+apiRouter.put(
+  '/courses/:id/progress',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
+
+    const progress =
+      Number(
+        req.body?.progress_percentage ??
+          0
       );
 
-    res.json({
-      certificates
-    });
+    res.json(
+      await db.programEnrollment.update(
+        {
+          where: {
+            programId_userId:
+              {
+                programId:
+                  req.params.id,
+
+                userId:
+                  profile.id,
+              },
+          },
+
+          data: {
+            progressPercentage:
+              progress,
+
+            status:
+              progress >= 100
+                ? 'COMPLETED'
+                : 'IN_PROGRESS',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// CERTIFICATE VERIFICATION
-// PUBLIC
-// -------------------------------------------------------------
 
 apiRouter.get(
-  '/certificates/verify/:id',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const certificate =
-      db.prepare(`
-        SELECT
-          c.id,
-          c.certificate_number,
-          c.issued_at,
-          c.verification_code,
-          p.full_name AS recipient_name,
-          co.title AS course_title,
-          s.name AS skill_name,
-          partner.name AS partner_name
-        FROM certificates c
-        JOIN profiles p
-          ON p.user_id = c.user_id
-        LEFT JOIN courses co
-          ON co.id = c.course_id
-        LEFT JOIN skills s
-          ON s.id = co.skill_id
-        LEFT JOIN partners partner
-          ON partner.id =
-             co.partner_id
-        WHERE
-          c.id = ?
-          OR c.verification_code = ?
-          OR c.certificate_number = ?
-        LIMIT 1
-      `).get(
-        req.params.id,
-        req.params.id,
-        req.params.id
-      ) as any;
-
-    if (!certificate) {
-      res.status(404).json({
-        valid: false,
-        error:
-          'Certificate not found.'
-      });
-      return;
-    }
-
-    res.json({
-      valid: true,
-      certificate
-    });
+  '/courses/:id/notes',
+  requireAuth,
+  async (_req, res) => {
+    res.json([]);
   }
 );
 
-// -------------------------------------------------------------
-// 20. GENERIC USER CERTIFICATE / COURSE CHECK
-// -------------------------------------------------------------
+apiRouter.post(
+  '/courses/:id/notes',
+  requireAuth,
+  async (_req, res) => {
+    res.status(201)
+      .json({
+        message:
+          'Course notes are not represented in the current Prisma schema.',
+      });
+  }
+);
+
+apiRouter.put(
+  '/courses/:id/notes/:noteId',
+  requireAuth,
+  async (_req, res) => {
+    res.json({
+      message:
+        'Course notes are not represented in the current Prisma schema.',
+    });
+  }
+);
 
 apiRouter.get(
   '/v1/courses/:id/enroll',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.programEnrollment.findUnique(
+        {
+          where: {
+            programId_userId:
+              {
+                programId:
+                  req.params.id,
 
-    const enrollment =
-      db.prepare(`
-        SELECT
-          ce.*,
-          c.title AS course_title,
-          c.certificate_available,
-          c.skill_id,
-          s.name AS skill_name
-        FROM course_enrollments ce
-        JOIN courses c
-          ON c.id = ce.course_id
-        LEFT JOIN skills s
-          ON s.id = c.skill_id
-        WHERE
-          ce.course_id = ?
-          AND ce.user_id = ?
-      `).get(
-        req.params.id,
-        user.user_id
-      );
-
-    res.json({
-      enrolled:
-        Boolean(enrollment),
-      enrollment:
-        enrollment || null
-    });
+                userId:
+                  profile.id,
+              },
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// 21. V1 BOOTCAMP ENROLLMENT STATUS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/v1/bootcamps/:id/enroll',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.programEnrollment.findUnique(
+        {
+          where: {
+            programId_userId:
+              {
+                programId:
+                  req.params.id,
 
-    const enrollment =
-      db.prepare(`
-        SELECT
-          be.*,
-          b.title AS bootcamp_title,
-          b.skill_id,
-          s.name AS skill_name
-        FROM bootcamp_enrollments be
-        JOIN bootcamps b
-          ON b.id = be.bootcamp_id
-        LEFT JOIN skills s
-          ON s.id = b.skill_id
-        WHERE
-          be.bootcamp_id = ?
-          AND be.user_id = ?
-      `).get(
-        req.params.id,
-        user.user_id
-      );
-
-    res.json({
-      enrolled:
-        Boolean(enrollment),
-      enrollment:
-        enrollment || null
-    });
+                userId:
+                  profile.id,
+              },
+          },
+        }
+      )
+    );
   }
 );
-// -------------------------------------------------------------
-// 22. NOTIFICATIONS
-// -------------------------------------------------------------
+
+/* =========================================================
+   CERTIFICATES
+========================================================= */
+
+apiRouter.get(
+  '/certificates',
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
+
+    res.json(
+      await db.certificate.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
+          },
+
+          include: {
+            skill:
+              true,
+          },
+
+          orderBy: {
+            issuedAt:
+              'desc',
+          },
+        }
+      )
+    );
+  }
+);
+
+apiRouter.get(
+  '/certificates/verify/:id',
+  async (req, res) => {
+    const certificate =
+      await db.certificate.findUnique(
+        {
+          where: {
+            id:
+              req.params.id,
+          },
+
+          include: {
+            skill:
+              true,
+
+            user:
+              true,
+          },
+        }
+      );
+
+    if (!certificate) {
+      return bad(
+        res,
+        'Certificate not found',
+        404
+      );
+    }
+
+    return res.json(
+      certificate
+    );
+  }
+);
+
+/* =========================================================
+   NOTIFICATIONS
+========================================================= */
 
 apiRouter.get(
   '/notifications',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.notification.findMany(
+        {
+          where: {
+            userId:
+              profile.id,
+          },
 
-    const notifications =
-      db.prepare(`
-        SELECT *
-        FROM notifications
-        WHERE user_id = ?
-        ORDER BY
-          created_at DESC
-      `).all(
-        user.user_id
-      );
-
-    const unreadCount =
-      db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM notifications
-        WHERE
-          user_id = ?
-          AND (
-            is_read = 0
-            OR is_read IS NULL
-          )
-      `).get(
-        user.user_id
-      ) as any;
-
-    res.json({
-      notifications,
-
-      unread_count:
-        Number(
-          unreadCount?.count || 0
-        )
-    });
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// MARK NOTIFICATION AS READ
-// -------------------------------------------------------------
 
 apiRouter.patch(
   '/notifications/:id/read',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.notification.updateMany(
+        {
+          where: {
+            id:
+              req.params.id,
 
-    const result =
-      db.prepare(`
-        UPDATE notifications
-        SET
-          is_read = 1,
-          read_at = ?
-        WHERE
-          id = ?
-          AND user_id = ?
-      `).run(
-        new Date().toISOString(),
-        req.params.id,
-        user.user_id
-      );
+            userId:
+              profile.id,
+          },
 
-    if (
-      Number(result.changes) === 0
-    ) {
-      res.status(404).json({
-        error:
-          'Notification not found.'
-      });
-      return;
-    }
-
-    res.json({
-      success: true
-    });
+          data: {
+            isRead:
+              true,
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// MARK ALL NOTIFICATIONS AS READ
-// -------------------------------------------------------------
 
 apiRouter.patch(
   '/notifications/read-all',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.notification.updateMany(
+        {
+          where: {
+            userId:
+              profile.id,
 
-    db.prepare(`
-      UPDATE notifications
-      SET
-        is_read = 1,
-        read_at = ?
-      WHERE
-        user_id = ?
-        AND (
-          is_read = 0
-          OR is_read IS NULL
-        )
-    `).run(
-      new Date().toISOString(),
-      user.user_id
+            isRead:
+              false,
+          },
+
+          data: {
+            isRead:
+              true,
+          },
+        }
+      )
     );
-
-    res.json({
-      success: true
-    });
   }
 );
 
-// -------------------------------------------------------------
-// 23. REPORTS
-// -------------------------------------------------------------
+/* =========================================================
+   REPORTS
+========================================================= */
 
 apiRouter.post(
   '/reports',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const {
-      reported_user_id,
-      session_id,
-      category,
-      description
-    } = req.body;
+      profile,
+    } =
+      auth(req);
 
-    if (
-      !category ||
-      !description
-    ) {
-      res.status(400).json({
-        error:
-          'Category and description are required.'
-      });
-      return;
-    }
+    const b =
+      req.body ?? {};
 
-    if (
-      reported_user_id ===
-      user.user_id
-    ) {
-      res.status(400).json({
-        error:
-          'You cannot report yourself.'
-      });
-      return;
-    }
+    const report =
+      await db.userReport.create(
+        {
+          data: {
+            reporterId:
+              profile.id,
 
-    if (
-      reported_user_id
-    ) {
-      const reportedUser =
-        db.prepare(`
-          SELECT user_id
-          FROM profiles
-          WHERE user_id = ?
-        `).get(
-          reported_user_id
-        );
+            reportedUserId:
+              b.reported_user_id ??
+              null,
 
-      if (!reportedUser) {
-        res.status(404).json({
-          error:
-            'Reported user not found.'
-        });
-        return;
-      }
-    }
+            sessionId:
+              b.session_id ??
+              null,
 
-    if (
-      session_id
-    ) {
-      const session =
-        getSessionById(
-          session_id
-        );
+            reportType:
+              enumValue(
+                b.report_type,
+                'OTHER'
+              ) as any,
 
-      if (!session) {
-        res.status(404).json({
-          error:
-            'Session not found.'
-        });
-        return;
-      }
+            description:
+              String(
+                b.description ??
+                  ''
+              ),
+          },
+        }
+      );
 
-      if (
-        !isSessionParticipant(
-          session,
-          user.user_id
-        )
-      ) {
-        res.status(403).json({
-          error:
-            'You cannot report this session.'
-        });
-        return;
-      }
-    }
-
-    const reportId =
-      crypto.randomUUID();
-
-    db.prepare(`
-      INSERT INTO reports (
-        id,
-        reporter_id,
-        reported_user_id,
-        session_id,
-        category,
-        description,
-        status
-      )
-      VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        'PENDING'
-      )
-    `).run(
-      reportId,
-      user.user_id,
-      reported_user_id || null,
-      session_id || null,
-      String(category).trim(),
-      String(description).trim()
-    );
-
-    res.status(201).json({
-      success: true,
-      report_id:
-        reportId
-    });
+    res.status(201)
+      .json(report);
   }
 );
-
-// -------------------------------------------------------------
-// MY REPORTS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/reports',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    const where =
+      profile.role ===
+      'ADMIN'
+        ? {}
+        : {
+            reporterId:
+              profile.id,
+          };
 
-    const reports =
-      db.prepare(`
-        SELECT
-          r.*,
-          p.full_name AS reported_user_name
-        FROM reports r
-        LEFT JOIN profiles p
-          ON p.user_id =
-             r.reported_user_id
-        WHERE
-          r.reporter_id = ?
-        ORDER BY
-          r.created_at DESC
-      `).all(
-        user.user_id
-      );
+    res.json(
+      await db.userReport.findMany(
+        {
+          where,
 
-    res.json({
-      reports
-    });
+          include: {
+            reportedUser:
+              true,
+
+            reporter:
+              true,
+
+            evidence:
+              true,
+          },
+
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
 
-// -------------------------------------------------------------
-// 24. BLOCK USER
-// -------------------------------------------------------------
+/* =========================================================
+   BLOCKS
+========================================================= */
 
 apiRouter.post(
   '/blocks',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
+  requireAuth,
+  async (req, res) => {
     const {
-      blocked_user_id
-    } = req.body;
+      profile,
+    } =
+      auth(req);
 
-    if (
-      !blocked_user_id
-    ) {
-      res.status(400).json({
-        error:
-          'blocked_user_id is required.'
-      });
-      return;
+    const blockedUserId =
+      req.body?.blocked_user_id;
+
+    if (!blockedUserId) {
+      return bad(
+        res,
+        'blocked_user_id is required'
+      );
     }
 
-    if (
-      blocked_user_id ===
-      user.user_id
-    ) {
-      res.status(400).json({
-        error:
-          'You cannot block yourself.'
-      });
-      return;
-    }
+    const block =
+      await db.userBlock.upsert(
+        {
+          where: {
+            blockerId_blockedUserId:
+              {
+                blockerId:
+                  profile.id,
 
-    const blockedUser =
-      db.prepare(`
-        SELECT user_id
-        FROM profiles
-        WHERE user_id = ?
-      `).get(
-        blocked_user_id
+                blockedUserId,
+              },
+          },
+
+          create: {
+            blockerId:
+              profile.id,
+
+            blockedUserId,
+
+            reason:
+              req.body?.reason ??
+              null,
+          },
+
+          update: {
+            reason:
+              req.body?.reason ??
+              null,
+          },
+        }
       );
 
-    if (!blockedUser) {
-      res.status(404).json({
-        error:
-          'User not found.'
-      });
-      return;
-    }
-
-    db.prepare(`
-      INSERT OR IGNORE INTO blocks (
-        id,
-        blocker_id,
-        blocked_id
-      )
-      VALUES (
-        ?,
-        ?,
-        ?
-      )
-    `).run(
-      crypto.randomUUID(),
-      user.user_id,
-      blocked_user_id
-    );
-
-    res.status(201).json({
-      success: true
-    });
+    res.status(201)
+      .json(block);
   }
 );
-
-// -------------------------------------------------------------
-// MY BLOCKED USERS
-// -------------------------------------------------------------
 
 apiRouter.get(
   '/blocks',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.userBlock.findMany(
+        {
+          where: {
+            blockerId:
+              profile.id,
+          },
 
-    const blocked =
-      db.prepare(`
-        SELECT
-          b.*,
-          p.full_name,
-          p.profile_photo,
-          p.city,
-          p.state
-        FROM blocks b
-        JOIN profiles p
-          ON p.user_id =
-             b.blocked_id
-        WHERE
-          b.blocker_id = ?
-        ORDER BY
-          b.created_at DESC
-      `).all(
-        user.user_id
-      );
-
-    res.json({
-      blocked
-    });
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// UNBLOCK USER
-// -------------------------------------------------------------
 
 apiRouter.delete(
   '/blocks/:userId',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAuth,
+  async (req, res) => {
+    const {
+      profile,
+    } =
+      auth(req);
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+    res.json(
+      await db.userBlock.deleteMany(
+        {
+          where: {
+            blockerId:
+              profile.id,
 
-    const result =
-      db.prepare(`
-        DELETE FROM blocks
-        WHERE
-          blocker_id = ?
-          AND blocked_id = ?
-      `).run(
-        user.user_id,
-        req.params.userId
-      );
-
-    if (
-      Number(result.changes) === 0
-    ) {
-      res.status(404).json({
-        error:
-          'Block relationship not found.'
-      });
-      return;
-    }
-
-    res.json({
-      success: true
-    });
+            blockedUserId:
+              req.params.userId,
+          },
+        }
+      )
+    );
   }
 );
 
-// -------------------------------------------------------------
-// 25. ADMIN ANALYTICS
-// -------------------------------------------------------------
+/* =========================================================
+   ADMIN
+========================================================= */
 
 apiRouter.get(
   '/admin/analytics',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAdmin,
+  async (_req, res) => {
+    const [
+      users,
+      skills,
+      sessions,
+      credits,
+    ] =
+      await Promise.all([
+        db.timeCreditWallet.count(),
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+        db.skill.count({
+          where: {
+            isActive:
+              true,
+          },
+        }),
 
-    if (
-      user.role !==
-      'ADMIN'
-    ) {
-      res.status(403).json({
-        error:
-          'Admin access required.'
-      });
-      return;
-    }
+        db.session.count(),
 
-    // ---------------------------------------------------------
-    // USER COUNTS
-    // ---------------------------------------------------------
+        db.timeCreditTransaction.aggregate(
+          {
+            where: {
+              transactionType:
+                'SESSION_EARN',
+            },
 
-    const totalUsers =
-      db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM profiles
-      `).get() as any;
-
-    const activeLearners =
-      db.prepare(`
-        SELECT COUNT(
-          DISTINCT user_id
-        ) AS count
-        FROM user_skills
-        WHERE
-          skill_type = 'LEARN'
-      `).get() as any;
-
-    const activeSharers =
-      db.prepare(`
-        SELECT COUNT(
-          DISTINCT user_id
-        ) AS count
-        FROM user_skills
-        WHERE
-          skill_type = 'SHARE'
-      `).get() as any;
-
-    // ---------------------------------------------------------
-    // SESSION METRICS
-    // ---------------------------------------------------------
-
-    const sessionStats =
-      db.prepare(`
-        SELECT
-          COUNT(*) AS total_sessions,
-
-          SUM(
-            CASE
-              WHEN status = 'VERIFIED'
-              THEN 1
-              ELSE 0
-            END
-          ) AS completed_sessions,
-
-          COALESCE(
-            SUM(
-              CASE
-                WHEN status = 'VERIFIED'
-                THEN verified_duration_seconds
-                ELSE 0
-              END
-            ),
-            0
-          ) AS learning_seconds
-        FROM sessions
-      `).get() as any;
-
-    // ---------------------------------------------------------
-    // CREDITS
-    // ---------------------------------------------------------
-
-    const creditStats =
-      db.prepare(`
-        SELECT
-          COALESCE(
-            SUM(
-              CASE
-                WHEN amount > 0
-                THEN amount
-                ELSE 0
-              END
-            ),
-            0
-          ) AS earned,
-
-          COALESCE(
-            SUM(
-              CASE
-                WHEN amount < 0
-                THEN ABS(amount)
-                ELSE 0
-              END
-            ),
-            0
-          ) AS spent
-        FROM credit_transactions
-        WHERE
-          status = 'COMPLETED'
-      `).get() as any;
-
-    // ---------------------------------------------------------
-    // RATINGS
-    // ---------------------------------------------------------
-
-    const ratingStats =
-      db.prepare(`
-        SELECT
-          COALESCE(
-            AVG(overall_score),
-            0
-          ) AS average_rating,
-
-          COUNT(*) AS total_ratings
-        FROM ratings
-      `).get() as any;
-
-    // ---------------------------------------------------------
-    // REPORTS
-    // ---------------------------------------------------------
-
-    const pendingReports =
-      db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM reports
-        WHERE
-          status = 'PENDING'
-      `).get() as any;
-
-    // ---------------------------------------------------------
-    // POPULAR LEARNING SKILLS
-    // ---------------------------------------------------------
-
-    const popularSkills =
-      db.prepare(`
-        SELECT
-          s.id,
-          s.name,
-          s.category,
-          COUNT(
-            DISTINCT us.user_id
-          ) AS learner_count
-        FROM user_skills us
-        JOIN skills s
-          ON s.id = us.skill_id
-        WHERE
-          us.skill_type = 'LEARN'
-        GROUP BY
-          s.id,
-          s.name,
-          s.category
-        ORDER BY
-          learner_count DESC
-        LIMIT 10
-      `).all();
-
-    // ---------------------------------------------------------
-    // POPULAR SHARING SKILLS
-    // ---------------------------------------------------------
-
-    const sharingSkills =
-      db.prepare(`
-        SELECT
-          s.id,
-          s.name,
-          s.category,
-          COUNT(
-            DISTINCT us.user_id
-          ) AS sharer_count
-        FROM user_skills us
-        JOIN skills s
-          ON s.id = us.skill_id
-        WHERE
-          us.skill_type = 'SHARE'
-        GROUP BY
-          s.id,
-          s.name,
-          s.category
-        ORDER BY
-          sharer_count DESC
-        LIMIT 10
-      `).all();
-
-    const learningHours =
-      Number(
-        sessionStats?.learning_seconds ||
-        0
-      ) / 3600;
-
-    res.json({
-      metrics: {
-        total_users:
-          Number(
-            totalUsers?.count || 0
-          ),
-
-        active_learners:
-          Number(
-            activeLearners?.count || 0
-          ),
-
-        active_sharers:
-          Number(
-            activeSharers?.count || 0
-          ),
-
-        total_sessions:
-          Number(
-            sessionStats?.total_sessions ||
-            0
-          ),
-
-        completed_sessions:
-          Number(
-            sessionStats?.completed_sessions ||
-            0
-          ),
-
-        total_learning_hours:
-          Math.round(
-            learningHours * 100
-          ) / 100,
-
-        credits_earned:
-          Number(
-            creditStats?.earned || 0
-          ),
-
-        credits_spent:
-          Number(
-            creditStats?.spent || 0
-          ),
-
-        average_rating:
-          Math.round(
-            Number(
-              ratingStats?.average_rating ||
-              0
-            ) * 100
-          ) / 100,
-
-        total_ratings:
-          Number(
-            ratingStats?.total_ratings ||
-            0
-          ),
-
-        pending_reports:
-          Number(
-            pendingReports?.count ||
-            0
-          )
-      },
-
-      popular_skills:
-        popularSkills,
-
-      popular_sharing_skills:
-        sharingSkills
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// 26. ADMIN USERS
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/admin/users',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    if (
-      user.role !==
-      'ADMIN'
-    ) {
-      res.status(403).json({
-        error:
-          'Admin access required.'
-      });
-      return;
-    }
-
-    const {
-      role,
-      search,
-      limit = '100',
-      offset = '0'
-    } = req.query;
-
-    let query = `
-      SELECT
-        p.*,
-
-        COALESCE(
-          ts.score,
-          85
-        ) AS trust_score,
-
-        COALESCE(
-          ts.reliability_score,
-          0
-        ) AS reliability_score,
-
-        COALESCE(
-          tca.balance,
-          0
-        ) AS time_credit_balance
-
-      FROM profiles p
-
-      LEFT JOIN trust_scores ts
-        ON ts.user_id =
-           p.user_id
-
-      LEFT JOIN time_credit_accounts tca
-        ON tca.user_id =
-           p.user_id
-
-      WHERE 1 = 1
-    `;
-
-    const params: any[] = [];
-
-    if (
-      typeof role === 'string' &&
-      role
-    ) {
-      query += `
-        AND p.role = ?
-      `;
-
-      params.push(
-        role
-      );
-    }
-
-    if (
-      typeof search === 'string' &&
-      search.trim()
-    ) {
-      query += `
-        AND (
-          LOWER(
-            p.full_name
-          ) LIKE LOWER(?)
-
-          OR LOWER(
-            p.email
-          ) LIKE LOWER(?)
-
-          OR LOWER(
-            p.city
-          ) LIKE LOWER(?)
-        )
-      `;
-
-      const searchValue =
-        `%${search.trim()}%`;
-
-      params.push(
-        searchValue,
-        searchValue,
-        searchValue
-      );
-    }
-
-    const safeLimit =
-      Math.min(
-        500,
-        Math.max(
-          1,
-          Number(limit) || 100
-        )
-      );
-
-    const safeOffset =
-      Math.max(
-        0,
-        Number(offset) || 0
-      );
-
-    query += `
-      ORDER BY
-        p.created_at DESC
-      LIMIT ?
-      OFFSET ?
-    `;
-
-    params.push(
-      safeLimit,
-      safeOffset
-    );
-
-    const users =
-      db.prepare(query)
-        .all(...params);
+            _sum: {
+              amount:
+                true,
+            },
+          }
+        ),
+      ]);
 
     res.json({
       users,
 
-      pagination: {
-        limit:
-          safeLimit,
+      skills,
 
-        offset:
-          safeOffset,
+      sessions,
 
-        returned:
-          users.length
-      }
+      creditsEarned:
+        credits._sum
+          .amount ??
+        0,
     });
   }
 );
 
-// -------------------------------------------------------------
-// 27. ADMIN REPORTS
-// -------------------------------------------------------------
+apiRouter.get(
+  '/admin/users',
+  requireAdmin,
+  async (req, res) => {
+    const q =
+      String(
+        req.query.q ??
+          ''
+      );
+
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+
+    if (error) return bad(res, error.message, 500);
+
+    const users = (data.users ?? [])
+      .map((user: any) => {
+        const metadata = user.user_metadata ?? {};
+        return {
+          id: user.id,
+          user_id: user.id,
+          email: user.email ?? null,
+          fullName: metadata.full_name ?? null,
+          ageGroup: metadata.age_group ?? null,
+          city: metadata.city ?? null,
+          state: metadata.state ?? null,
+          preferredLanguage: metadata.preferred_language ?? 'English',
+          educationWorkStatus: metadata.education_work_status ?? null,
+          profilePhotoUrl: metadata.profile_photo_url ?? null,
+          role: metadata.role ?? 'LEARNER',
+          isEmailVerified: Boolean(user.email_confirmed_at),
+          isActive: metadata.is_active !== false,
+          createdAt: user.created_at,
+        };
+      })
+      .filter((user: any) => {
+        if (!q) return true;
+        const term = q.toLowerCase();
+        return [user.fullName, user.city, user.email]
+          .filter(Boolean)
+          .some((value: any) => String(value).toLowerCase().includes(term));
+      });
+
+    res.json(users);
+  }
+);
 
 apiRouter.get(
   '/admin/reports',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
+  requireAdmin,
+  async (_req, res) => {
+    res.json(
+      await db.userReport.findMany(
+        {
+          include: {
+            reporter:
+              true,
 
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
+            reportedUser:
+              true,
 
-    if (
-      user.role !==
-      'ADMIN'
-    ) {
-      res.status(403).json({
-        error:
-          'Admin access required.'
-      });
-      return;
-    }
+            evidence:
+              true,
+          },
 
-    const reports =
-      db.prepare(`
-        SELECT
-          r.*,
-
-          reporter.full_name
-            AS reporter_name,
-
-          reported.full_name
-            AS reported_user_name
-
-        FROM reports r
-
-        JOIN profiles reporter
-          ON reporter.user_id =
-             r.reporter_id
-
-        LEFT JOIN profiles reported
-          ON reported.user_id =
-             r.reported_user_id
-
-        ORDER BY
-          CASE
-            WHEN r.status = 'PENDING'
-            THEN 0
-            ELSE 1
-          END,
-
-          r.created_at DESC
-      `).all();
-
-    res.json({
-      reports
-    });
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        }
+      )
+    );
   }
 );
-
-// -------------------------------------------------------------
-// UPDATE ADMIN REPORT STATUS
-// -------------------------------------------------------------
 
 apiRouter.patch(
   '/admin/reports/:id',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    const user =
-      await getAuthenticatedUser(req);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Unauthorized'
-      });
-      return;
-    }
-
-    if (
-      user.role !==
-      'ADMIN'
-    ) {
-      res.status(403).json({
-        error:
-          'Admin access required.'
-      });
-      return;
-    }
-
+  requireAdmin,
+  async (req, res) => {
     const {
-      status,
-      admin_notes
-    } = req.body;
+      profile,
+    } =
+      auth(req);
 
-    const allowedStatuses = [
-      'PENDING',
-      'REVIEWING',
-      'RESOLVED',
-      'DISMISSED'
-    ];
+    const b =
+      req.body ?? {};
 
-    if (
-      !allowedStatuses.includes(
-        status
-      )
-    ) {
-      res.status(400).json({
-        error:
-          'Invalid report status.'
-      });
-      return;
-    }
+    const report =
+      await db.userReport.update(
+        {
+          where: {
+            id:
+              req.params.id,
+          },
 
-    const result =
-      db.prepare(`
-        UPDATE reports
-        SET
-          status = ?,
-          admin_notes = ?,
-          reviewed_by = ?,
-          reviewed_at = ?
-        WHERE id = ?
-      `).run(
-        status,
-        admin_notes || '',
-        user.user_id,
-        new Date().toISOString(),
-        req.params.id
+          data: {
+            status:
+              enumValue(
+                b.status,
+                'OPEN'
+              ) as any,
+
+            adminNotes:
+              b.admin_notes ??
+              null,
+
+            resolvedBy:
+              b.status &&
+              b.status !==
+                'OPEN'
+                ? profile.id
+                : null,
+
+            resolvedAt:
+              b.status &&
+              b.status !==
+                'OPEN'
+                ? new Date()
+                : null,
+          },
+        }
       );
 
-    if (
-      Number(result.changes) === 0
-    ) {
-      res.status(404).json({
-        error:
-          'Report not found.'
-      });
-      return;
-    }
+    await db.adminAction
+      .create({
+        data: {
+          adminId:
+            profile.id,
 
-    res.json({
-      success: true
-    });
+          actionType:
+            'REPORT_RESOLVED',
+
+          targetId:
+            report.id,
+
+          notes:
+            b.admin_notes ??
+            null,
+        },
+      })
+      .catch(
+        () => undefined
+      );
+
+    res.json(report);
   }
 );
 
-// -------------------------------------------------------------
-// 28. HEALTH CHECK
-// -------------------------------------------------------------
+/* =========================================================
+   COMPATIBILITY ALIASES
+========================================================= */
+
+/* =========================================================
+   COMPATIBILITY ALIASES
+========================================================= */
 
 apiRouter.get(
-  '/health',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    let database =
-      'ok';
+  '/v1/me/profile',
+  requireAuth,
+  async (req, res) => {
+    const { profile } = auth(req);
 
-    try {
-      db.prepare(
-        'SELECT 1'
-      ).get();
-    } catch {
-      database =
-        'error';
-    }
-
-    res.json({
-      status:
-        database === 'ok'
-          ? 'ok'
-          : 'degraded',
-
-      service:
-        'LearnX Backend',
-
-      database,
-
-      timestamp:
-        new Date().toISOString()
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// 29. API HEALTH CHECK
-// -------------------------------------------------------------
-
-apiRouter.get(
-  '/v1/health',
-  async (
-    req: Request,
-    res: Response
-  ) => {
-    let database =
-      'ok';
-
-    try {
-      db.prepare(
-        'SELECT 1'
-      ).get();
-    } catch {
-      database =
-        'error';
-    }
-
-    res.json({
-      status:
-        database === 'ok'
-          ? 'ok'
-          : 'degraded',
-
-      service:
-        'LearnX API',
-
-      version:
-        'v1',
-
-      database,
-
-      timestamp:
-        new Date().toISOString()
-    });
-  }
-);
-
-// -------------------------------------------------------------
-// 30. API 404 HANDLER
-// -------------------------------------------------------------
-
-apiRouter.use(
-  (req: Request, res: Response) => {
-    res.status(404).json({
-      error: 'API endpoint not found.',
-      path: req.originalUrl,
-      method: req.method
+    return res.json({
+      profile,
     });
   }
 );

@@ -1,144 +1,464 @@
-import React, { lazy, Suspense, useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+
 import { AuthProvider, useAuth } from './context/AuthContext';
+
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { Footer } from './components/Footer';
+
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { RegistrationPage } from './pages/RegistrationPage';
-import { TermsPage, PrivacyPage } from './pages/LegalPages';
+import {
+  TermsPage,
+  PrivacyPage,
+} from './pages/LegalPages';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
-import { OnboardingPage } from './pages/OnboardingPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { OnboardingPage } from './components/Register';
 import { DashboardPage } from './pages/DashboardPage';
 import { DiscoverPage } from './pages/DiscoverPage';
 import { RecommendationsPage } from './pages/RecommendationsPage';
 import { SessionsPage } from './pages/SessionsPage';
-import { TimeWalletPage } from './pages/TimeWalletPage';
+import { InternalSessionRoomPage } from './pages/InternalSessionRoomPage';
+import {
+  CoursesPage,
+  CourseDetailPage,
+} from './pages/CoursesPage';
+import {
+  BootcampsPage,
+  BootcampDetailPage,
+} from './pages/BootcampsPage';
+import { NotesPage } from './pages/NotesPage';
 import { AssistantPage } from './pages/AssistantPage';
 import { QuizzesPage } from './pages/QuizzesPage';
 import { QuizDetailPage } from './pages/QuizDetailPage';
-import { RatingsPage } from './pages/RatingsPage';
-import { AchievementsPage } from './pages/AchievementsPage';
-import { LearningPlanPage } from './pages/LearningPlanPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { TimeWalletPage } from './pages/TimeWalletPage';
+import { LearningPlanPage } from './pages/LearningPlanPage';
+import { AchievementsPage } from './pages/AchievementsPage';
+import { RatingsPage } from './pages/RatingsPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
-import { CourseDetailPage, CoursesPage } from './pages/CoursesPage';
-import { NotesPage } from './pages/NotesPage';
-import { BootcampDetailPage, BootcampsPage } from './pages/BootcampsPage';
 
-const SessionRoomPage = lazy(() => import('./pages/InternalSessionRoomPage').then((module) => ({ default: module.InternalSessionRoomPage })));
-
-function MainRouter() {
+function AppContent() {
   const { user, loading } = useAuth();
-  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+
+  const [currentPath, setCurrentPath] = useState(
+    window.location.pathname || '/'
+  );
+
+  const navigate = (path: string) => {
+    if (path === currentPath) {
+      return;
+    }
+
+    window.history.pushState({}, '', path);
+    setCurrentPath(path);
+    window.scrollTo(0, 0);
+  };
 
   useEffect(() => {
     const handlePopState = () => {
-      setCurrentPath(window.location.pathname);
+      setCurrentPath(
+        window.location.pathname || '/'
+      );
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
 
-  const navigate = (path: string) => {
-    window.history.pushState({}, '', path);
-    setCurrentPath(path.split('?')[0]);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+    window.addEventListener(
+      'popstate',
+      handlePopState
+    );
+
+    return () => {
+      window.removeEventListener(
+        'popstate',
+        handlePopState
+      );
+    };
+  }, []);
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white text-slate-500 text-xs">
-        Initializing LearnX platform...
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-blue-500" />
+
+          <p className="text-sm text-slate-400">
+            Loading LearnX...
+          </p>
+        </div>
       </div>
     );
   }
 
-  // Route matching
-  let pageContent: React.ReactNode = null;
+  const publicPaths = [
+    '/',
+    '/login',
+    '/register',
+    '/register/learner',
+    '/register/mentor',
+    '/verify-email',
+    '/forgot-password',
+    '/reset-password',
+    '/terms',
+    '/privacy',
+  ];
 
-  if (currentPath === '/' || currentPath === '') {
-    pageContent = user ? <DashboardPage navigate={navigate} /> : <LandingPage navigate={navigate} />;
-  } else if (currentPath === '/login') {
-    pageContent = <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/register') {
-    pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage navigate={navigate} />;
-  } else if (currentPath === '/register/learner') {
-    pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage role="LEARNER" navigate={navigate} />;
-  } else if (currentPath === '/register/mentor') {
-    pageContent = user ? <DashboardPage navigate={navigate} /> : <RegistrationPage role="MENTOR" navigate={navigate} />;
-  } else if (currentPath === '/terms') {
-    pageContent = <TermsPage navigate={navigate} />;
-  } else if (currentPath === '/privacy') {
-    pageContent = <PrivacyPage navigate={navigate} />;
-  } else if (currentPath === '/verify-email') {
-    pageContent = <VerifyEmailPage navigate={navigate} />;
-  } else if (currentPath === '/forgot-password') {
-    pageContent = <ForgotPasswordPage navigate={navigate} />;
-  } else if (currentPath === '/onboarding') {
-    pageContent = user ? <OnboardingPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/dashboard') {
-    pageContent = user ? <DashboardPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/discover' || currentPath === '/learn' || currentPath === '/skills') {
-    pageContent = <DiscoverPage navigate={navigate} />;
-  } else if (currentPath === '/recommendations') {
-    pageContent = <RecommendationsPage navigate={navigate} />;
-  } else if (currentPath === '/sessions') {
-    pageContent = user ? <SessionsPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath.startsWith('/session-room/')) {
-    const sessionId = currentPath.replace('/session-room/', '');
-    pageContent = user ? (
-      <Suspense fallback={<div className="flex min-h-[70vh] items-center justify-center text-sm text-slate-400">Loading session room...</div>}>
-        <SessionRoomPage sessionId={sessionId} navigate={navigate} />
-      </Suspense>
-    ) : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/time-wallet') {
-    pageContent = user ? <TimeWalletPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/assistant') {
-    pageContent = user ? <AssistantPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/quizzes') {
-    pageContent = <QuizzesPage navigate={navigate} />;
-  } else if (currentPath.startsWith('/quizzes/')) {
-    const quizId = currentPath.replace('/quizzes/', '');
-    pageContent = user ? <QuizDetailPage quizId={quizId} navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/ratings') {
-    pageContent = user ? <RatingsPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/achievements') {
-    pageContent = <AchievementsPage navigate={navigate} />;
-  } else if (currentPath.startsWith('/courses/')) {
-    const courseId = currentPath.replace('/courses/', '');
-    pageContent = <CourseDetailPage courseId={courseId} navigate={navigate} />;
-  } else if (currentPath === '/courses' || currentPath === '/partner-courses') {
-    pageContent = <CoursesPage navigate={navigate} />;
-  } else if (currentPath.startsWith('/bootcamps/')) {
-    const bootcampId = currentPath.replace('/bootcamps/', '');
-    pageContent = <BootcampDetailPage bootcampId={bootcampId} navigate={navigate} />;
-  } else if (currentPath === '/bootcamps') {
-    pageContent = <BootcampsPage navigate={navigate} />;
-  } else if (currentPath === '/notes') {
-    pageContent = user ? <NotesPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/learning-path' || currentPath === '/my-learning') {
-    pageContent = user ? <LearningPlanPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath === '/profile' || currentPath.startsWith('/profile/')) {
-    pageContent = user ? <ProfilePage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else if (currentPath.startsWith('/admin')) {
-    pageContent = user ? <AdminDashboardPage navigate={navigate} /> : <LoginPage navigate={navigate} />;
-  } else {
-    pageContent = <LandingPage navigate={navigate} />;
+  const isPublicPath =
+    publicPaths.includes(currentPath) ||
+    currentPath.startsWith('/courses') ||
+    currentPath.startsWith('/bootcamps');
+
+  if (!user && !isPublicPath) {
+    navigate('/login');
+    return null;
   }
 
-  const isRoom = currentPath.startsWith('/session-room/');
-  const showSidebar = user && !isRoom && currentPath !== '/' && currentPath !== '/login' && currentPath !== '/register' && currentPath !== '/onboarding';
+  if (
+    user &&
+    !user.onboarding_completed &&
+    currentPath !== '/onboarding' &&
+    currentPath !== '/logout'
+  ) {
+    navigate('/onboarding');
+    return null;
+  }
+
+  const renderPage = () => {
+    if (currentPath === '/') {
+      return (
+        <LandingPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/login') {
+      return (
+        <LoginPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/register') {
+      return (
+        <RegistrationPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/register/learner') {
+      return (
+        <RegistrationPage
+          role="LEARNER"
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/register/mentor') {
+      return (
+        <RegistrationPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/verify-email') {
+      return (
+        <VerifyEmailPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/forgot-password') {
+      return (
+        <ForgotPasswordPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/reset-password') {
+      return (
+        <ResetPasswordPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/terms') {
+      return (
+        <TermsPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/privacy') {
+      return (
+        <PrivacyPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/onboarding') {
+      return (
+        <OnboardingPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/dashboard') {
+      return (
+        <DashboardPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/discover') {
+      return (
+        <DiscoverPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/recommendations') {
+      return (
+        <RecommendationsPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/sessions') {
+      return (
+        <SessionsPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    const sessionMatch = currentPath.match(
+      /^\/sessions\/([^/]+)$/
+    );
+
+    if (sessionMatch) {
+      return (
+        <InternalSessionRoomPage
+          sessionId={sessionMatch[1]}
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/courses') {
+      return (
+        <CoursesPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    const courseMatch = currentPath.match(
+      /^\/courses\/([^/]+)$/
+    );
+
+    if (courseMatch) {
+      return (
+        <CourseDetailPage
+          courseId={courseMatch[1]}
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/bootcamps') {
+      return (
+        <BootcampsPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    const bootcampMatch = currentPath.match(
+      /^\/bootcamps\/([^/]+)$/
+    );
+
+    if (bootcampMatch) {
+      return (
+        <BootcampDetailPage
+          bootcampId={bootcampMatch[1]}
+          navigate={navigate}
+        />
+      );
+    }
+
+ if (currentPath === '/notes') {
+  return <NotesPage />;
+}
+    if (currentPath === '/assistant') {
+      return (
+        <AssistantPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/quizzes') {
+      return (
+        <QuizzesPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    const quizMatch = currentPath.match(
+      /^\/quizzes\/([^/]+)$/
+    );
+
+    if (quizMatch) {
+      return (
+        <QuizDetailPage
+          quizId={quizMatch[1]}
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/profile') {
+      return (
+        <ProfilePage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/time-wallet') {
+      return (
+        <TimeWalletPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/learning-path') {
+      return (
+        <LearningPlanPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/achievements') {
+      return (
+        <AchievementsPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/ratings') {
+      return (
+        <RatingsPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (
+      currentPath === '/admin' ||
+      currentPath.startsWith('/admin/')
+    ) {
+      if (user?.role !== 'ADMIN') {
+        navigate('/dashboard');
+        return null;
+      }
+
+      return (
+        <AdminDashboardPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/skills') {
+      return (
+        <DiscoverPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/notifications') {
+      return (
+        <DashboardPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    if (currentPath === '/certificates') {
+      return (
+        <AchievementsPage
+          navigate={navigate}
+        />
+      );
+    }
+
+    return (
+      <DashboardPage
+        navigate={navigate}
+      />
+    );
+  };
+
+  const showAppShell =
+    !!user &&
+    currentPath !== '/' &&
+    currentPath !== '/login' &&
+    currentPath !== '/register' &&
+    currentPath !== '/register/learner' &&
+    currentPath !== '/register/mentor' &&
+    currentPath !== '/verify-email' &&
+    currentPath !== '/forgot-password' &&
+    currentPath !== '/reset-password';
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b0f17] text-slate-100 font-['Plus_Jakarta_Sans'] selection:bg-cyan-500 selection:text-white">
-      <Navbar currentPath={currentPath} navigate={navigate} />
-      <div className="flex-1 flex">
-        {showSidebar && <Sidebar currentPath={currentPath} navigate={navigate} />}
-        <main className="flex-1 min-w-0">{pageContent}</main>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      {showAppShell && (
+        <Navbar
+          currentPath={currentPath}
+          navigate={navigate}
+        />
+      )}
+
+      <div className="flex min-h-[calc(100vh-4rem)]">
+        {showAppShell && (
+          <Sidebar
+            currentPath={currentPath}
+            navigate={navigate}
+          />
+        )}
+
+        <main className="min-w-0 flex-1">
+          {renderPage()}
+        </main>
       </div>
-      {!isRoom && <Footer navigate={navigate} />}
+
+      {showAppShell && (
+        <Footer
+          navigate={navigate}
+        />
+      )}
     </div>
   );
 }
@@ -146,7 +466,7 @@ function MainRouter() {
 export default function App() {
   return (
     <AuthProvider>
-      <MainRouter />
+      <AppContent />
     </AuthProvider>
   );
 }

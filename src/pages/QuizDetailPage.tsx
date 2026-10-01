@@ -1,54 +1,225 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { Award, Clock, ArrowRight, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+
+import React, { useEffect, useState } from 'react';
+import {
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  ArrowRight,
+} from 'lucide-react';
 import { apiRequest } from '../lib/api';
 import confetti from 'canvas-confetti';
 import { QuizTimer } from '../components/QuizTimer';
 
-export function QuizDetailPage({ 
-  quizId, 
-  navigate 
-}: { 
-  quizId: string; 
+interface QuizQuestion {
+  id: string;
+  quiz_id?: string;
+  question_text: string;
+  options: string[];
+  points?: number;
+  topic?: string | null;
+}
+
+interface QuizData {
+  id: string;
+  title: string;
+  description?: string | null;
+  time_limit_minutes?: number;
+  timeLimitMinutes?: number;
+  passing_score?: number;
+  passingScore?: number;
+  skill_name?: string;
+  skill?: {
+    id: string;
+    name: string;
+    category?: string;
+  } | null;
+  questions?: QuizQuestion[];
+}
+
+interface QuizResponse extends QuizData {
+  previous_attempt?: QuizAttempt | null;
+}
+
+interface QuizAttempt {
+  id?: string;
+  quizId?: string;
+  userId?: string;
+  score: number;
+  correctAnswers?: number;
+  totalQuestions?: number;
+  passed: boolean;
+  completedAt?: string;
+}
+
+interface QuizSubmitResponse {
+  attempt: QuizAttempt;
+  score: number;
+  correct: number;
+  total: number;
+}
+
+interface SelectedAnswers {
+  [questionId: string]: number;
+}
+
+export function QuizDetailPage({
+  quizId,
+  navigate,
+}: {
+  quizId: string;
   navigate: (path: string) => void;
 }) {
-  const { user } = useAuth();
-  const [quiz, setQuiz] = useState<any>(null);
-  const [questions, setQuestions] = useState<any[]>([]);
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
-  const [result, setResult] = useState<any>(null);
+  const [quiz, setQuiz] = useState<QuizData | null>(null);
+  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [selectedAnswers, setSelectedAnswers] =
+    useState<SelectedAnswers>({});
+  const [result, setResult] =
+    useState<QuizSubmitResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const formRef = useRef<HTMLFormElement>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    apiRequest(`/quizzes/${quizId}`).then((res) => {
-      setQuiz(res.quiz);
-      setQuestions(res.questions || []);
-    }).catch(() => {}).finally(() => setLoading(false));
+    let cancelled = false;
+
+    const loadQuiz = async () => {
+      setLoading(true);
+      setError('');
+
+      try {
+        const response =
+          await apiRequest<QuizResponse>(
+            `/quizzes/${quizId}`
+          );
+
+        if (cancelled) {
+          return;
+        }
+
+        setQuiz(response || null);
+
+        const normalizedQuestions = Array.isArray(
+          response?.questions
+        )
+          ? response.questions.map((question) => ({
+              ...question,
+              options: Array.isArray(question.options)
+                ? question.options
+                : [],
+            }))
+          : [];
+
+        setQuestions(normalizedQuestions);
+
+        if (response?.previous_attempt) {
+          const previous = response.previous_attempt;
+
+          setResult({
+            attempt: previous,
+            score: Number(previous.score || 0),
+            correct: Number(
+              previous.correctAnswers || 0
+            ),
+            total: Number(
+              previous.totalQuestions ||
+                normalizedQuestions.length
+            ),
+          });
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setError(
+            err.message || 'Failed to load quiz assessment.'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadQuiz();
+
+    return () => {
+      cancelled = true;
+    };
   }, [quizId]);
 
-  const handleSelectOption = (questionId: string, optionIndex: number) => {
-    if (result) return; // locked after submission
-    setSelectedAnswers({ ...selectedAnswers, [questionId]: optionIndex });
+  const handleSelectOption = (
+    questionId: string,
+    optionIndex: number
+  ) => {
+    if (result || submitting) {
+      return;
+    }
+
+    setSelectedAnswers((previous) => ({
+      ...previous,
+      [questionId]: optionIndex,
+    }));
   };
 
-  const handleSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (submitting || result) return;
+  const handleSubmit = async (
+    event?: React.FormEvent
+  ) => {
+    event?.preventDefault();
+
+    if (submitting || result) {
+      return;
+    }
+
+    if (questions.length === 0) {
+      setError('This quiz has no questions.');
+      return;
+    }
+
+    if (
+      Object.keys(selectedAnswers).length === 0
+    ) {
+      setError(
+        'Please answer at least one question before submitting.'
+      );
+      return;
+    }
+
     setSubmitting(true);
+    setError('');
 
     try {
-      const data = await apiRequest(`/quizzes/${quizId}/submit`, {
-        method: 'POST',
-        body: JSON.stringify({ answers: selectedAnswers })
-      });
+      const answers = Object.entries(
+        selectedAnswers
+      ).map(
+        ([question_id, selected_answer]) => ({
+          question_id,
+          selected_answer,
+        })
+      );
+
+      const data =
+        await apiRequest<QuizSubmitResponse>(
+          `/quizzes/${quizId}/submit`,
+          {
+            method: 'POST',
+            body: {
+              answers,
+            },
+          }
+        );
+
       setResult(data);
-      if (data.passed) {
-        confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+
+      if (data?.attempt?.passed) {
+        confetti({
+          particleCount: 100,
+          spread: 70,
+          origin: { y: 0.6 },
+        });
       }
     } catch (err: any) {
-      alert(err.message || 'Submission failed');
+      setError(
+        err.message || 'Submission failed.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -56,9 +227,14 @@ export function QuizDetailPage({
 
   const handleTimeExpired = () => {
     if (!result && !submitting) {
-      alert('Time expired! Automatically submitting your assessment.');
-      handleSubmit();
+      void handleSubmit();
     }
+  };
+
+  const handleRetake = () => {
+    setResult(null);
+    setSelectedAnswers({});
+    setError('');
   };
 
   if (loading) {
@@ -72,145 +248,279 @@ export function QuizDetailPage({
   if (!quiz) {
     return (
       <div className="py-20 text-center space-y-3">
-        <p className="text-xs text-slate-400">Quiz not found.</p>
-        <button onClick={() => navigate('/quizzes')} className="text-xs text-[#1565D8] underline">
+        <p className="text-xs text-slate-400">
+          {error || 'Quiz not found.'}
+        </p>
+
+        <button
+          onClick={() => navigate('/quizzes')}
+          className="text-xs text-[#1565D8] underline"
+        >
           Return to Quizzes
         </button>
       </div>
     );
   }
 
+  const skillName =
+    quiz.skill_name ||
+    quiz.skill?.name ||
+    'Skill Assessment';
+
+  const durationMinutes =
+    Number(
+      quiz.time_limit_minutes ??
+        quiz.timeLimitMinutes ??
+        15
+    ) || 15;
+
+  const passingScore =
+    Number(
+      quiz.passing_score ??
+        quiz.passingScore ??
+        70
+    ) || 70;
+
+  const isPassed =
+    result?.attempt?.passed === true;
+
+  const resultCorrect =
+    result?.correct ??
+    result?.attempt?.correctAnswers ??
+    0;
+
+  const resultTotal =
+    result?.total ??
+    result?.attempt?.totalQuestions ??
+    questions.length;
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 space-y-6">
-      {/* Quiz Header with Timer */}
+      {/* Quiz Header */}
       <div className="p-6 rounded-2xl border border-[#E2E8F0] bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <span className="text-[11px] font-semibold text-[#1565D8] uppercase tracking-wider block mb-1">
-            {quiz.skill_name || 'Skill Assessment'}
+            {skillName}
           </span>
+
           <h1 className="text-xl sm:text-2xl font-bold text-[#0F172A] font-['Space_Grotesk']">
             {quiz.title}
           </h1>
-          <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
-            {quiz.description}
-          </p>
+
+          {quiz.description && (
+            <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+              {quiz.description}
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3 mt-3 text-[10px] text-slate-500">
+            <span>
+              Questions:{' '}
+              <strong className="text-slate-700">
+                {questions.length}
+              </strong>
+            </span>
+
+            <span>•</span>
+
+            <span>
+              Passing score:{' '}
+              <strong className="text-slate-700">
+                {passingScore}%
+              </strong>
+            </span>
+          </div>
         </div>
+
         {!result && (
           <div className="shrink-0">
-            <QuizTimer 
-              durationMinutes={quiz.time_limit_minutes || 15} 
-              onTimeExpired={handleTimeExpired} 
+            <QuizTimer
+              durationMinutes={durationMinutes}
+              onTimeExpired={handleTimeExpired}
             />
           </div>
         )}
       </div>
 
-      {/* Result Card if Submitted */}
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800"
+        >
+          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* Result */}
       {result && (
-        <div className={`p-6 rounded-2xl border shadow-sm space-y-3 ${
-          result.passed 
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-900' 
-            : 'border-amber-200 bg-amber-50 text-amber-900'
-        }`}>
+        <div
+          className={`p-6 rounded-2xl border shadow-sm space-y-4 ${
+            isPassed
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+              : 'border-amber-200 bg-amber-50 text-amber-900'
+          }`}
+        >
           <div className="flex items-center gap-3">
-            {result.passed ? (
+            {isPassed ? (
               <CheckCircle2 className="h-8 w-8 text-emerald-600 shrink-0" />
             ) : (
               <AlertCircle className="h-8 w-8 text-amber-600 shrink-0" />
             )}
+
             <div>
               <h3 className="text-base font-bold">
-                {result.passed ? 'Assessment Passed Successfully!' : 'Assessment Complete — Review Recommended'}
+                {isPassed
+                  ? 'Assessment Passed Successfully!'
+                  : 'Assessment Complete — Review Recommended'}
               </h3>
+
               <p className="text-xs mt-0.5">
-                Score: <strong className="text-sm font-bold">{result.score}%</strong> ({result.correct_count} of {result.total_questions} correct) · Demonstrated Level: <strong className="uppercase">{result.demonstrated_level}</strong>
+                Score:{' '}
+                <strong className="text-sm font-bold">
+                  {Number(result.score || 0).toFixed(0)}%
+                </strong>{' '}
+                ({resultCorrect} of {resultTotal} correct)
               </p>
             </div>
           </div>
 
-          {result.weak_topics?.length > 0 && (
-            <div className="pt-2 border-t border-emerald-200/50">
-              <span className="text-xs font-semibold block mb-1">Topics to practice with a peer sharer:</span>
-              <div className="flex flex-wrap gap-1.5">
-                {result.weak_topics.map((t: string) => (
-                  <span key={t} className="px-2.5 py-1 rounded-md bg-white/80 border border-emerald-200 text-[11px] font-semibold text-emerald-800">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="text-xs">
+            {isPassed ? (
+              <p>
+                Your score meets the{' '}
+                <strong>{passingScore}%</strong>{' '}
+                passing requirement for this assessment.
+              </p>
+            ) : (
+              <p>
+                Your score is below the{' '}
+                <strong>{passingScore}%</strong>{' '}
+                passing requirement. You can review the skill
+                and attempt the assessment again.
+              </p>
+            )}
+          </div>
 
-          <div className="flex items-center gap-3 pt-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
             <button
               onClick={() => navigate('/discover')}
-              className="px-4 py-2 rounded-xl bg-[#1565D8] text-white font-semibold text-xs hover:bg-blue-700 transition-colors shadow-xs"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#1565D8] text-white font-semibold text-xs hover:bg-blue-700 transition-colors shadow-xs"
             >
-              Find Peer Mentor for Weak Topics
+              Find a Knowledge Sharer
+              <ArrowRight className="h-3.5 w-3.5" />
             </button>
+
             <button
-              onClick={() => {
-                setResult(null);
-                setSelectedAnswers({});
-              }}
-              className="px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors"
+              onClick={handleRetake}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors"
             >
+              <RefreshCw className="h-3.5 w-3.5" />
               Retake Quiz
             </button>
           </div>
         </div>
       )}
 
-      {/* Questions Form */}
-      <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
-        {questions.map((q, qIndex) => (
+      {/* Questions */}
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-6"
+      >
+        {questions.map((question, questionIndex) => (
           <div
-            key={q.id}
+            key={question.id}
             className="p-6 rounded-2xl border border-[#E2E8F0] bg-white shadow-xs space-y-4"
           >
-            <div className="flex items-center justify-between text-xs text-[#64748B]">
-              <span className="font-bold text-[#1565D8]">Question {qIndex + 1} of {questions.length}</span>
-              {q.topic && <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">{q.topic}</span>}
+            <div className="flex items-center justify-between gap-3 text-xs text-[#64748B]">
+              <span className="font-bold text-[#1565D8]">
+                Question {questionIndex + 1} of{' '}
+                {questions.length}
+              </span>
+
+              {question.topic && (
+                <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+                  {question.topic}
+                </span>
+              )}
             </div>
 
             <h3 className="text-sm font-semibold text-[#0F172A] leading-relaxed">
-              {q.question_text}
+              {question.question_text}
             </h3>
 
             <div className="space-y-2.5">
-              {q.options.map((opt: string, optIndex: number) => {
-                const isSelected = selectedAnswers[q.id] === optIndex;
-                return (
-                  <div
-                    key={optIndex}
-                    onClick={() => handleSelectOption(q.id, optIndex)}
-                    className={`p-3.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center gap-3 ${
-                      isSelected
-                        ? 'border-[#1565D8] bg-[#EAF3FF] text-[#0F172A] font-semibold shadow-2xs'
-                        : 'border-[#E2E8F0] bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className={`h-5 w-5 rounded-lg border flex items-center justify-center text-[11px] font-bold ${
-                      isSelected ? 'border-[#1565D8] bg-[#1565D8] text-white' : 'border-slate-300 bg-slate-50 text-slate-600'
-                    }`}>
-                      {isSelected ? '✓' : String.fromCharCode(65 + optIndex)}
-                    </div>
-                    <span>{opt}</span>
-                  </div>
-                );
-              })}
+              {question.options.map(
+                (option, optionIndex) => {
+                  const isSelected =
+                    selectedAnswers[question.id] ===
+                    optionIndex;
+
+                  return (
+                    <button
+                      key={`${question.id}-${optionIndex}`}
+                      type="button"
+                      disabled={!!result || submitting}
+                      onClick={() =>
+                        handleSelectOption(
+                          question.id,
+                          optionIndex
+                        )
+                      }
+                      className={`w-full text-left p-3.5 rounded-xl border text-xs transition-all flex items-center gap-3 ${
+                        isSelected
+                          ? 'border-[#1565D8] bg-[#EAF3FF] text-[#0F172A] font-semibold shadow-2xs'
+                          : 'border-[#E2E8F0] bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                      } ${
+                        result || submitting
+                          ? 'cursor-default'
+                          : 'cursor-pointer'
+                      }`}
+                    >
+                      <span
+                        className={`h-5 w-5 shrink-0 rounded-lg border flex items-center justify-center text-[11px] font-bold ${
+                          isSelected
+                            ? 'border-[#1565D8] bg-[#1565D8] text-white'
+                            : 'border-slate-300 bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        {isSelected
+                          ? '✓'
+                          : String.fromCharCode(
+                              65 + optionIndex
+                            )}
+                      </span>
+
+                      <span>{option}</span>
+                    </button>
+                  );
+                }
+              )}
             </div>
           </div>
         ))}
 
-        {!result && (
+        {questions.length === 0 && (
+          <div className="p-8 rounded-2xl border border-slate-200 bg-white text-center">
+            <p className="text-xs text-slate-500">
+              This quiz currently has no questions.
+            </p>
+          </div>
+        )}
+
+        {!result && questions.length > 0 && (
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              disabled={submitting || Object.keys(selectedAnswers).length === 0}
+              disabled={
+                submitting ||
+                Object.keys(selectedAnswers).length === 0
+              }
               className="px-8 py-3 rounded-xl bg-[#1565D8] text-white font-semibold text-xs shadow-md hover:bg-blue-700 disabled:opacity-40 transition-all"
             >
-              {submitting ? 'Evaluating Assessment...' : 'Submit Assessment Answers'}
+              {submitting
+                ? 'Evaluating Assessment...'
+                : 'Submit Assessment Answers'}
             </button>
           </div>
         )}
