@@ -1,1 +1,105 @@
 @import "tailwindcss";
+
+:root {
+  --learnx-ebony: #0B0F14;
+  --learnx-iron: #2F3338;
+  --learnx-torea-bay: #123A8C;
+  --learnx-royal-blue: #4169E1;
+  --learnx-text-primary: #FFFFFF;
+  --learnx-text-secondary: #B8C0CC;
+  --learnx-border: #3A3F46;
+  --learnx-surface: #151A21;
+}
+
+html {
+  color-scheme: dark;
+  background: var(--learnx-ebony);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at 15% 0%,
+      rgb(65 105 225 / 0.10),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 85% 10%,
+      rgb(18 58 140 / 0.14),
+      transparent 30%
+    ),
+    var(--learnx-ebony);
+  color: var(--learnx-text-primary);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgb(65 105 225 / 0.35);
+  color: var(--learnx-text-primary);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  color-scheme: dark;
+}
+
+a {
+  color: var(--learnx-royal-blue);
+}
+
+a:hover {
+  color: #6F8FF0;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--learnx-royal-blue);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--learnx-iron) var(--learnx-ebony);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--learnx-ebony);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--learnx-iron);
+  border-radius: 999px;
+  border: 2px solid var(--learnx-ebony);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #444A52;
+}
