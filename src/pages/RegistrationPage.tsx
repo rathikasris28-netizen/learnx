@@ -159,7 +159,6 @@ function RegistrationForm({
   const [registration, setRegistration] = useState<{
     welcome_bonus: number;
     balance: number;
-    authenticated: boolean;
   } | null>(null);
 
   const strongPassword =
@@ -311,7 +310,6 @@ function RegistrationForm({
       setRegistration({
         welcome_bonus: result.welcome_bonus,
         balance: result.balance,
-        authenticated: result.authenticated,
       });
     } catch (cause: any) {
       setError(
@@ -357,19 +355,7 @@ function RegistrationForm({
             </>
           )}
 
-          <p className="text-sm leading-6 text-slate-300">
-  We sent a verification email to:
-</p>
-
-<p className="font-semibold text-white">
-  {values.email}
-</p>
-
-<p className="text-sm leading-6 text-slate-400">
-  Please open the email and click the verification link.
-  You must verify your email before signing in to LearnX.
-</p>
-
+          
 <button
   type="button"
   onClick={() => navigate('/login')}

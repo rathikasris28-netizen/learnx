@@ -13,7 +13,7 @@ import {
   TermsPage,
   PrivacyPage,
 } from './pages/LegalPages';
-import { VerifyEmailPage } from './pages/VerifyEmailPage';
+
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { OnboardingPage } from './components/Register';
@@ -168,13 +168,7 @@ function AppContent() {
   );
 }
 
-    if (currentPath === '/verify-email') {
-      return (
-        <VerifyEmailPage
-          navigate={navigate}
-        />
-      );
-    }
+    
 
     if (currentPath === '/forgot-password') {
       return (

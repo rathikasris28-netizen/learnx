@@ -276,16 +276,7 @@ async function requireAuth(
     );
   }
 
-  if (
-    !auth.user.email_confirmed_at
-  ) {
-    return bad(
-      res,
-      'Please verify your email before accessing LearnX.',
-      403
-    );
-  }
-
+  
   (req as any).auth = auth;
 
   next();
@@ -605,15 +596,7 @@ async function register(
    * - The account remains unverified until the user clicks
    *   the verification link.
    */
-  const webAppUrl = (
-    process.env.WEB_URL ??
-    process.env.APP_URL ??
-    'http://localhost:5173'
-  ).replace(/\/+$/, '');
-
-  const emailVerifyRedirect =
-    `${webAppUrl}/verify-email`;
-
+ 
   const {
     data,
     error,
@@ -627,8 +610,6 @@ async function register(
         String(b.password),
 
       options: {
-        emailRedirectTo:
-          emailVerifyRedirect,
 
         data: {
           full_name:
@@ -672,8 +653,7 @@ async function register(
           is_active:
             true,
 
-          is_email_verified:
-            false,
+          
         },
       },
     });
@@ -895,8 +875,7 @@ async function register(
             user.email,
 
           email_confirmed:
-            false,
-
+  true,
           role,
 
           wallet_balance:
@@ -913,23 +892,18 @@ async function register(
           user.id,
 
         email_confirmed:
-          false,
+  true,
 
         role,
 
         welcome_bonus:
           result.welcomeBonus,
 
-        balance:
+                balance:
           result.wallet
             .balance,
-
-        authenticated:
-          false,
-
-        requires_email_verification:
-          true,
-      });
+      },
+    );
   } catch (e) {
     /*
      * If the database transaction fails,
@@ -1086,26 +1060,7 @@ apiRouter.post(
      * before accessing LearnX.
      */
 
-    if (
-      !data.user.email_confirmed_at
-    ) {
-      return res
-        .status(403)
-        .json({
-          error:
-            'Please verify your email before logging in.',
-
-          requires_email_verification:
-            true,
-
-          email:
-            data.user.email ??
-            email,
-
-          user_id:
-            data.user.id,
-        });
-    }
+    
 
     /*
      * Fetch the latest LearnX profile
@@ -1162,164 +1117,20 @@ apiRouter.post(
    EMAIL VERIFICATION
 ========================================================= */
 
-async function verifyEmailToken(
-  req: Request,
-  res: Response
-) {
-  const tokenHash =
-    String(
-      req.query.token_hash ??
-      req.body?.token_hash ??
-      req.body?.token ??
-      ''
-    ).trim();
 
-  const tokenType =
-    String(
-      req.query.type ??
-      req.body?.type ??
-      'email'
-    ).trim();
-
-  if (!tokenHash) {
-    return bad(
-      res,
-      'A valid email verification token is required',
-      400
-    );
-  }
-
-  if (tokenType !== 'email') {
-    return bad(
-      res,
-      'Invalid email verification token type',
-      400
-    );
-  }
-
-  const {
-    data,
-    error,
-  } =
-    await supabaseAnon.auth.verifyOtp({
-      token_hash:
-        tokenHash,
-      type: 'email',
-    });
-
-  if (error || !data.user) {
-    return bad(
-      res,
-      error?.message ??
-        'Email verification failed',
-      400
-    );
-  }
-
-  /*
-   * email_confirmed_at is the authoritative Supabase
-   * verification state. We also keep a metadata flag
-   * for the existing LearnX profile representation.
-   */
-  const current =
-    data.user.user_metadata ?? {};
-
-  const metadataUpdate =
-    await supabaseAdmin.auth.admin.updateUserById(
-      data.user.id,
-      {
-        user_metadata: {
-          ...current,
-          is_email_verified: true,
-        },
-      }
-    );
-
-  if (metadataUpdate.error) {
-    console.error(
-      'Unable to update email verification metadata:',
-      metadataUpdate.error
-    );
-  }
-
-  return res.json({
-    verified:
-      true,
-
-    message:
-      'Email verified successfully',
-
-    user: {
-      id:
-        data.user.id,
-
-      email:
-        data.user.email ??
-        null,
-
-      email_confirmed:
-        Boolean(
-          data.user.email_confirmed_at
-        ),
-    },
-  });
-}
 
 /*
  * GET endpoint:
  * The LearnX verify-email page calls this endpoint with
  * ?token_hash=...&type=email.
  */
-apiRouter.get(
-  '/auth/verify-email',
-  async (req, res) => {
-    try {
-      return await verifyEmailToken(
-        req,
-        res
-      );
-    } catch (e) {
-      console.error(
-        'Email verification GET error:',
-        e
-      );
 
-      return bad(
-        res,
-        'Email verification failed',
-        500
-      );
-    }
-  }
-);
 
 /*
  * POST endpoint:
  * Keep POST support for the existing frontend/client
  * so older LearnX verification calls continue to work.
  */
-apiRouter.post(
-  '/auth/verify-email',
-  async (req, res) => {
-    try {
-      return await verifyEmailToken(
-        req,
-        res
-      );
-    } catch (e) {
-      console.error(
-        'Email verification POST error:',
-        e
-      );
-
-      return bad(
-        res,
-        'Email verification failed',
-        500
-      );
-    }
-  }
-);
 
 apiRouter.post(
   '/auth/resend-verification',

@@ -29,19 +29,13 @@ interface AuthContextType {
     role: string;
     welcome_bonus: number;
     balance: number;
-    authenticated: boolean;
   }>;
 
   logout: () => void;
 
   refreshUser: () => Promise<void>;
 
-  verifyEmail: (
-    userId?: string,
-    email?: string,
-    token?: string
-  ) => Promise<void>;
-}
+ }
 
 const AuthContext = createContext<
   AuthContextType | undefined
@@ -275,7 +269,7 @@ export function AuthProvider({
    * MENTOR is therefore converted to
    * KNOWLEDGE_SHARER before being sent.
    */
-  const register = async (
+   const register =async (
     formData: any,
     role: 'LEARNER' | 'MENTOR'
   ) => {
@@ -285,39 +279,28 @@ export function AuthProvider({
         : 'LEARNER';
 
     const data = await apiRequest(
-      '/auth/register',
-      {
-        method: 'POST',
-        body: {
-          ...formData,
-          role: backendRole,
-        },
-      }
-    );
+  '/auth/register',
+  {
+    method: 'POST',
+    body: {
+      ...formData,
+      role: backendRole,
+    },
+  }
+);
 
-    if (!data?.user?.id) {
-      throw new Error(
-        'Registration succeeded without returning the created account.'
-      );
-    }
+if (!data?.user?.id) {
+  throw new Error(
+    'Registration succeeded without returning the created account.'
+  );
+}
 
-    /**
-     * Registration does NOT create a frontend
-     * authentication session.
-     *
-     * Email verification is required first.
-     */
-    localStorage.removeItem(
-      'learnx_user_id'
-    );
+await login(
+  formData.email,
+  formData.password
+);
 
-    localStorage.removeItem(
-      'learnx_token'
-    );
-
-    setToken(null);
-    setUser(null);
-
+    
     const registeredRole =
       data?.profile?.role ??
       backendRole;
@@ -342,21 +325,16 @@ export function AuthProvider({
         : welcomeBonus;
 
     return {
-      user_id: data.user.id,
+  user_id: data.user.id,
 
-      email_confirmed:
-        data?.profile?.is_email_verified ??
-        false,
+  email_confirmed: true,
 
-      role: registeredRole,
+  role: registeredRole,
 
-      welcome_bonus:
-        welcomeBonus,
+  welcome_bonus: welcomeBonus,
 
-      balance,
-
-      authenticated: false,
-    };
+  balance,
+};
   };
 
   /**
@@ -369,84 +347,40 @@ export function AuthProvider({
    * userId and email remain in the signature
    * for compatibility with existing callers.
    */
-  const verifyEmail = async (
-    userId?: string,
-    email?: string,
-    token?: string
-  ): Promise<void> => {
-    void userId;
-    void email;
-
-    if (!token) {
-      throw new Error(
-        'Email verification token is required.'
-      );
-    }
-
-    await apiRequest(
-      '/auth/verify-email',
-      {
-        method: 'POST',
-        body: {
-          token,
-        },
-      }
-    );
-
-    /**
-     * Do not call refreshUser() here.
-     *
-     * Email verification does not automatically
-     * create an authenticated access-token session.
-     *
-     * The user should log in normally after
-     * verification.
-     */
-    setUser(null);
-    setToken(null);
-
-    localStorage.removeItem(
-      'learnx_user_id'
-    );
-
-    localStorage.removeItem(
-      'learnx_token'
-    );
-  };
+  
 
   /**
    * Logout.
    */
   const logout = (): void => {
-    localStorage.removeItem(
-      'learnx_user_id'
-    );
-
-    localStorage.removeItem(
-      'learnx_token'
-    );
-
-    setUser(null);
-    setToken(null);
-    setLoading(false);
-  };
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        loading,
-        login,
-        register,
-        logout,
-        refreshUser,
-        verifyEmail,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+  localStorage.removeItem(
+    'learnx_user_id'
   );
+
+  localStorage.removeItem(
+    'learnx_token'
+  );
+
+  setUser(null);
+  setToken(null);
+  setLoading(false);
+};
+
+return (
+  <AuthContext.Provider
+    value={{
+      user,
+      token,
+      loading,
+      login,
+      register,
+      logout,
+      refreshUser,
+    }}
+  >
+    {children}
+  </AuthContext.Provider>
+);
 }
 
 export function useAuth() {
