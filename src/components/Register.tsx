@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -436,7 +436,6 @@ export function OnboardingPage({
     setError('');
 
     if (step <= 1) {
-      navigate('/register');
       return;
     }
 
@@ -492,14 +491,10 @@ export function OnboardingPage({
         },
       });
 
-      await refreshUser();
 
       setCompleted(true);
-
-      window.setTimeout(() => {
-        navigate('/dashboard');
-      }, 1200);
-    } catch (cause: any) {
+      navigate('/dashboard');
+} catch (cause: any) {
       setError(
         cause?.message ||
           'Unable to complete onboarding. Please try again.'
@@ -1417,3 +1412,4 @@ export function OnboardingPage({
     </main>
   );
 }
+
