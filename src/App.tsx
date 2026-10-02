@@ -159,13 +159,14 @@ function AppContent() {
       );
     }
 
-    if (currentPath === '/register/mentor') {
-      return (
-        <RegistrationPage
-          navigate={navigate}
-        />
-      );
-    }
+   if (currentPath === '/register/mentor') {
+  return (
+    <RegistrationPage
+      role="MENTOR"
+      navigate={navigate}
+    />
+  );
+}
 
     if (currentPath === '/verify-email') {
       return (

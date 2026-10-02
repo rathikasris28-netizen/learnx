@@ -594,35 +594,89 @@ async function register(
   }
 
   /*
-   * Create Supabase authentication account.
+   * Create the Supabase authentication account through the
+   * normal signUp flow.
    *
-   * Email is intentionally NOT confirmed here.
-   * The user must verify the email first.
+   * IMPORTANT:
+   * - Supabase sends the confirmation email from signUp()
+   *   when "Confirm email" is enabled in Supabase Auth.
+   * - Do NOT use admin.createUser() here because that admin
+   *   method does not send the signup confirmation email.
+   * - The account remains unverified until the user clicks
+   *   the verification link.
    */
+  const webAppUrl = (
+    process.env.WEB_URL ??
+    process.env.APP_URL ??
+    'http://localhost:5173'
+  ).replace(/\/+$/, '');
+
+  const emailVerifyRedirect =
+    `${webAppUrl}/verify-email`;
 
   const {
     data,
     error,
   } =
-    await supabaseAdmin.auth.admin.createUser(
-      {
-        email: String(
-          b.email
-        ).trim().toLowerCase(),
+    await supabaseAnon.auth.signUp({
+      email: String(
+        b.email
+      ).trim().toLowerCase(),
 
-        password:
-          String(b.password),
+      password:
+        String(b.password),
 
-        email_confirm: false,
+      options: {
+        emailRedirectTo:
+          emailVerifyRedirect,
 
-        user_metadata: {
+        data: {
           full_name:
             String(
               b.full_name
             ).trim(),
+
+          age_group:
+            b.age_group ??
+            null,
+
+          city:
+            b.city ??
+            null,
+
+          state:
+            b.state ??
+            null,
+
+          preferred_language:
+            b.preferred_language ??
+            'English',
+
+          education_work_status:
+            b.education_work_status ??
+            null,
+
+          profile_photo_url:
+            b.profile_photo_url ??
+            null,
+
+          role,
+
+          bio:
+            b.bio ??
+            null,
+
+          onboarding_completed:
+            false,
+
+          is_active:
+            true,
+
+          is_email_verified:
+            false,
         },
-      }
-    );
+      },
+    });
 
   if (
     error ||
@@ -977,9 +1031,36 @@ apiRouter.post(
      */
 
     if (error) {
+      const errorMessage =
+        String(
+          error.message ?? ''
+        );
+
+      if (
+        /email not confirmed|email.*confirm/i.test(
+          errorMessage
+        )
+      ) {
+        return res
+          .status(403)
+          .json({
+            error:
+              'Please verify your email before logging in.',
+
+            requires_email_verification:
+              true,
+
+            email:
+              String(email)
+                .trim()
+                .toLowerCase(),
+          });
+      }
+
       return bad(
         res,
-        error.message,
+        errorMessage ||
+          'Login failed',
         401
       );
     }
@@ -1081,131 +1162,226 @@ apiRouter.post(
    EMAIL VERIFICATION
 ========================================================= */
 
+async function verifyEmailToken(
+  req: Request,
+  res: Response
+) {
+  const tokenHash =
+    String(
+      req.query.token_hash ??
+      req.body?.token_hash ??
+      req.body?.token ??
+      ''
+    ).trim();
+
+  const tokenType =
+    String(
+      req.query.type ??
+      req.body?.type ??
+      'email'
+    ).trim();
+
+  if (!tokenHash) {
+    return bad(
+      res,
+      'A valid email verification token is required',
+      400
+    );
+  }
+
+  if (tokenType !== 'email') {
+    return bad(
+      res,
+      'Invalid email verification token type',
+      400
+    );
+  }
+
+  const {
+    data,
+    error,
+  } =
+    await supabaseAnon.auth.verifyOtp({
+      token_hash:
+        tokenHash,
+      type: 'email',
+    });
+
+  if (error || !data.user) {
+    return bad(
+      res,
+      error?.message ??
+        'Email verification failed',
+      400
+    );
+  }
+
+  /*
+   * email_confirmed_at is the authoritative Supabase
+   * verification state. We also keep a metadata flag
+   * for the existing LearnX profile representation.
+   */
+  const current =
+    data.user.user_metadata ?? {};
+
+  const metadataUpdate =
+    await supabaseAdmin.auth.admin.updateUserById(
+      data.user.id,
+      {
+        user_metadata: {
+          ...current,
+          is_email_verified: true,
+        },
+      }
+    );
+
+  if (metadataUpdate.error) {
+    console.error(
+      'Unable to update email verification metadata:',
+      metadataUpdate.error
+    );
+  }
+
+  return res.json({
+    verified:
+      true,
+
+    message:
+      'Email verified successfully',
+
+    user: {
+      id:
+        data.user.id,
+
+      email:
+        data.user.email ??
+        null,
+
+      email_confirmed:
+        Boolean(
+          data.user.email_confirmed_at
+        ),
+    },
+  });
+}
+
+/*
+ * GET endpoint:
+ * The LearnX verify-email page calls this endpoint with
+ * ?token_hash=...&type=email.
+ */
+apiRouter.get(
+  '/auth/verify-email',
+  async (req, res) => {
+    try {
+      return await verifyEmailToken(
+        req,
+        res
+      );
+    } catch (e) {
+      console.error(
+        'Email verification GET error:',
+        e
+      );
+
+      return bad(
+        res,
+        'Email verification failed',
+        500
+      );
+    }
+  }
+);
+
+/*
+ * POST endpoint:
+ * Keep POST support for the existing frontend/client
+ * so older LearnX verification calls continue to work.
+ */
 apiRouter.post(
   '/auth/verify-email',
   async (req, res) => {
-    const {
-      token,
-      user_id,
-      email,
-    } =
-      req.body ?? {};
+    try {
+      return await verifyEmailToken(
+        req,
+        res
+      );
+    } catch (e) {
+      console.error(
+        'Email verification POST error:',
+        e
+      );
 
-    /*
-     * Preferred verification:
-     * Supabase token_hash.
-     */
-
-    if (token) {
-      const {
-        data,
-        error,
-      } =
-        await supabaseAnon.auth.verifyOtp(
-          {
-            token_hash:
-              String(token),
-
-            type:
-              'email',
-          }
-        );
-
-      if (error) {
-        return bad(
-          res,
-          error.message,
-          400
-        );
-      }
-
-      if (data.user) {
-        const current = data.user.user_metadata ?? {};
-        await supabaseAdmin.auth.admin.updateUserById(data.user.id, {
-          user_metadata: {
-            ...current,
-            is_email_verified: true,
-          },
-        });
-      }
-
-      return res.json({
-        verified:
-          true,
-
-        user:
-          data.user,
-      });
-    }
-
-    /*
-     * Without the Supabase verification
-     * token we cannot safely verify an
-     * email just from user_id/email.
-     *
-     * Return a clear error instead of
-     * falsely marking the account verified.
-     */
-
-    if (
-      user_id ||
-      email
-    ) {
       return bad(
         res,
-        'A valid email verification token is required',
-        400
+        'Email verification failed',
+        500
       );
     }
-
-    return bad(
-      res,
-      'Verification token is required',
-      400
-    );
   }
 );
 
 apiRouter.post(
   '/auth/resend-verification',
   async (req, res) => {
-    const email =
-      req.body?.email;
+    try {
+      const email =
+        String(
+          req.body?.email ??
+          ''
+        ).trim().toLowerCase();
 
-    if (!email) {
-      return bad(
-        res,
-        'Email is required'
-      );
-    }
+      if (!email) {
+        return bad(
+          res,
+          'Email is required'
+        );
+      }
 
-    const {
-      error,
-    } =
-      await supabaseAdmin.auth.resend(
-        {
+      const webAppUrl = (
+        process.env.WEB_URL ??
+        process.env.APP_URL ??
+        'http://localhost:5173'
+      ).replace(/\/+$/, '');
+
+      const {
+        error,
+      } =
+        await supabaseAnon.auth.resend({
           type: 'signup',
+          email,
+          options: {
+            emailRedirectTo:
+              `${webAppUrl}/verify-email`,
+          },
+        });
 
-          email:
-            String(
-              email
-            )
-              .trim()
-              .toLowerCase(),
-        }
+      if (error) {
+        return bad(
+          res,
+          error.message
+        );
+      }
+
+      return res.json({
+        success:
+          true,
+
+        message:
+          'Verification email sent. Please check your inbox and spam folder.',
+      });
+    } catch (e) {
+      console.error(
+        'Resend verification error:',
+        e
       );
 
-    if (error) {
       return bad(
         res,
-        error.message
+        'Unable to resend verification email',
+        500
       );
     }
-
-    res.json({
-      message:
-        'Verification email sent',
-    });
   }
 );
 

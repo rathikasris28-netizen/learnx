@@ -220,19 +220,6 @@ function RegistrationForm({
       (learner || selectedSkills.length > 0)
   );
 
-  useEffect(() => {
-    if (!registration) return;
-
-    const destination = registration.authenticated
-      ? '/onboarding'
-      : `/login?registered=1&email=${encodeURIComponent(values.email)}`;
-
-    const timeout = window.setTimeout(() => {
-      navigate(destination);
-    }, 1800);
-
-    return () => window.clearTimeout(timeout);
-  }, [registration, navigate, values.email]);
 
   const update = (
     event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
@@ -370,11 +357,27 @@ function RegistrationForm({
             </>
           )}
 
-          <p className="text-xs text-slate-400">
-            {registration.authenticated
-              ? 'Taking you to onboarding...'
-              : 'Account created. Taking you to sign in...'}
-          </p>
+          <p className="text-sm leading-6 text-slate-300">
+  We sent a verification email to:
+</p>
+
+<p className="font-semibold text-white">
+  {values.email}
+</p>
+
+<p className="text-sm leading-6 text-slate-400">
+  Please open the email and click the verification link.
+  You must verify your email before signing in to LearnX.
+</p>
+
+<button
+  type="button"
+  onClick={() => navigate('/login')}
+  className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-[#4169E1] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#123A8C]"
+>
+  Go to Login
+  <ArrowRight className="h-4 w-4" />
+</button>
         </section>
       </main>
     );

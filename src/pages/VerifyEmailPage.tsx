@@ -1,173 +1,208 @@
-import React, { useState } from 'react';
-import { useAuth } from '../context/AuthContext';
-import {
-  Mail,
-  CheckCircle2,
-  ArrowRight,
-  RefreshCw,
-  AlertCircle,
-} from 'lucide-react';
-import { apiRequest } from '../lib/api';
+import { useEffect, useState } from 'react';
 
-export function VerifyEmailPage({
-  navigate,
-}: {
-  navigate: (path: string) => void;
-}) {
-  const { user, verifyEmail } = useAuth();
+type VerificationState =
+  | 'loading'
+  | 'success'
+  | 'error';
 
-  const searchParams = new URLSearchParams(window.location.search);
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL ??
+  'http://localhost:3000/api'
+).replace(/\/+$/, '');
 
-  const emailParam =
-    searchParams.get('email') ||
-    user?.email ||
-    'your-email@example.com';
+export function VerifyEmailPage() {
+  const [state, setState] =
+    useState<VerificationState>('loading');
 
-  const userIdParam =
-    searchParams.get('user_id') ||
-    user?.user_id;
+  const [message, setMessage] = useState(
+    'Verifying your LearnX email...'
+  );
 
-  const tokenParam =
-    searchParams.get('token');
+  useEffect(() => {
+    let active = true;
 
-  const [loading, setLoading] = useState(false);
-  const [verified, setVerified] = useState(false);
-  const [resendStatus, setResendStatus] = useState('');
-  const [error, setError] = useState('');
+    async function verifyEmail() {
+      try {
+        const params =
+          new URLSearchParams(
+            window.location.search
+          );
 
-  const handleResend = async () => {
-    setError('');
-    setResendStatus('');
+        /*
+         * New Supabase custom-template flow:
+         * ?token_hash=...&type=email
+         *
+         * token is kept as a fallback for the
+         * existing LearnX verification flow.
+         */
+        const tokenHash =
+          params.get('token_hash') ??
+          params.get('token');
 
-    try {
-      setResendStatus('Resending verification email...');
+        const tokenType =
+          params.get('type') ?? 'email';
 
-      await apiRequest('/auth/resend-verification', {
-        method: 'POST',
-        body: {
-          email: emailParam,
-        },
-      });
+        if (!tokenHash) {
+          if (active) {
+            setState('error');
+            setMessage(
+              'Verification token is missing. Please use the latest verification email.'
+            );
+          }
+          return;
+        }
 
-      setResendStatus(
-        `Verification email sent to ${emailParam}`
-      );
-    } catch (err: any) {
-      setResendStatus('');
-      setError(
-        err?.message ||
-          'Failed to resend verification email.'
-      );
-    }
-  };
+        const response =
+          await fetch(
+            `${API_BASE_URL}/auth/verify-email?token_hash=${encodeURIComponent(
+              tokenHash
+            )}&type=${encodeURIComponent(
+              tokenType
+            )}`,
+            {
+              method: 'GET',
+              headers: {
+                Accept:
+                  'application/json',
+              },
+            }
+          );
 
-  const handleConfirmVerification = async () => {
-    setLoading(true);
-    setError('');
+        const result =
+          await response
+            .json()
+            .catch(() => null);
 
-    try {
-      if (!tokenParam) {
-        throw new Error(
-          'Verification token is missing. Please open the verification link from your email or request a new verification email.'
+        if (
+          !response.ok ||
+          !result?.verified
+        ) {
+          throw new Error(
+            result?.error ??
+              result?.message ??
+              'Email verification failed.'
+          );
+        }
+
+        if (!active) return;
+
+        setState('success');
+        setMessage(
+          'Your email has been verified successfully.'
+        );
+
+        /*
+         * The verification endpoint intentionally does
+         * not log the user into LearnX. Send the user to
+         * the normal login flow after verification.
+         */
+        window.history.replaceState(
+          {},
+          document.title,
+          '/verify-email'
+        );
+      } catch (error) {
+        if (!active) return;
+
+        setState('error');
+
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : 'Email verification failed.'
         );
       }
-
-      await verifyEmail(
-        userIdParam,
-        emailParam,
-        tokenParam
-      );
-
-      setVerified(true);
-
-      setTimeout(() => {
-        navigate('/onboarding');
-      }, 1500);
-    } catch (err: any) {
-      setError(
-        err?.message ||
-          'Verification confirmation failed.'
-      );
-    } finally {
-      setLoading(false);
     }
-  };
+
+    void verifyEmail();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function goToLogin() {
+    window.location.href =
+      '/login?verified=1';
+  }
 
   return (
-    <div className="flex min-h-[80vh] items-center justify-center px-4 py-12 bg-[#0B0F14]">
-      <div className="w-full max-w-md text-center space-y-6">
-        <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1] mx-auto shadow-inner">
-          <Mail className="h-8 w-8" />
-        </div>
+    <main className="min-h-screen bg-[#0B0F14] px-4 py-10 text-white">
+      <div className="mx-auto flex min-h-[80vh] max-w-md items-center justify-center">
+        <section className="w-full rounded-2xl border border-[#2F3338] bg-[#0B0F14] p-8 text-center shadow-2xl">
+          {state === 'loading' && (
+            <>
+              <div className="mx-auto mb-6 h-12 w-12 animate-spin rounded-full border-4 border-[#2F3338] border-t-[#4169E1]" />
 
-        <div>
-          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-['Space_Grotesk']">
-            Verify Your Email Address
-          </h2>
+              <h1 className="text-2xl font-bold">
+                Verifying Email
+              </h1>
 
-          <p className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed">
-            We sent a verification link to{' '}
-            <strong className="text-white font-semibold">
-              {emailParam}
-            </strong>
-            . Please verify your email to unlock peer learning sessions and knowledge exchange.
-          </p>
-        </div>
+              <p className="mt-3 text-sm leading-6 text-gray-400">
+                {message}
+              </p>
+            </>
+          )}
 
-        {error && (
-          <div className="flex items-center gap-2.5 p-3.5 rounded-xl border border-rose-800/60 bg-rose-950/40 text-rose-300 text-xs text-left backdrop-blur-sm">
-            <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
-            <span>{error}</span>
-          </div>
-        )}
+          {state === 'success' && (
+            <>
+              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-[#123A8C] text-3xl font-bold text-white">
+                ✓
+              </div>
 
-        {resendStatus && (
-          <div className="p-3.5 rounded-xl border border-[#4169E1]/30 bg-[#123A8C]/20 text-blue-200 text-xs backdrop-blur-sm">
-            {resendStatus}
-          </div>
-        )}
+              <h1 className="text-2xl font-bold">
+                Email Verified
+              </h1>
 
-        {verified ? (
-          <div className="p-4 rounded-xl border border-emerald-800/60 bg-emerald-950/40 text-emerald-300 text-xs flex items-center justify-center gap-2 font-medium backdrop-blur-sm">
-            <CheckCircle2 className="h-4 w-4" />
-            <span>
-              Email verified! Redirecting to onboarding...
-            </span>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-6 sm:p-7 space-y-4 backdrop-blur-md shadow-2xl">
-            <button
-              onClick={handleConfirmVerification}
-              disabled={loading}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] text-white text-xs font-semibold shadow-md shadow-[#4169E1]/20 hover:from-[#5278ef] hover:to-[#1746a2] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <span>
-                {loading
-                  ? 'Verifying...'
-                  : 'I have verified my email / Confirm Now'}
-              </span>
+              <p className="mt-3 text-sm leading-6 text-gray-400">
+                {message}
+              </p>
 
-              <ArrowRight className="h-3.5 w-3.5" />
-            </button>
+              <button
+                type="button"
+                onClick={goToLogin}
+                className="mt-7 inline-flex items-center justify-center rounded-xl bg-[#4169E1] px-6 py-3 font-semibold text-white transition hover:bg-[#123A8C] focus:outline-none focus:ring-2 focus:ring-[#4169E1] focus:ring-offset-2 focus:ring-offset-[#0B0F14]"
+              >
+                Go to Login
+              </button>
+            </>
+          )}
 
-            <button
-              onClick={handleResend}
-              type="button"
-              className="w-full py-2.5 px-4 rounded-xl border border-[#2F3338] bg-[#0B0F14] text-slate-300 hover:text-white hover:border-slate-500 text-xs transition-colors flex items-center justify-center gap-1.5"
-            >
-              <RefreshCw className="h-3.5 w-3.5 text-[#4169E1]" />
-              <span>Resend Verification Email</span>
-            </button>
-          </div>
-        )}
+          {state === 'error' && (
+            <>
+              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-[#2F3338] text-3xl font-bold text-white">
+                !
+              </div>
 
-        <button
-          onClick={() => navigate('/login')}
-          className="text-xs text-slate-400 hover:text-[#4169E1] transition-colors"
-        >
-          Back to Sign In
-        </button>
+              <h1 className="text-2xl font-bold">
+                Verification Failed
+              </h1>
+
+              <p className="mt-3 text-sm leading-6 text-gray-400">
+                {message}
+              </p>
+
+              <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="rounded-xl border border-[#2F3338] px-5 py-3 font-semibold text-white transition hover:border-[#4169E1]"
+                >
+                  Try Again
+                </button>
+
+                <button
+                  type="button"
+                  onClick={goToLogin}
+                  className="rounded-xl bg-[#4169E1] px-5 py-3 font-semibold text-white transition hover:bg-[#123A8C]"
+                >
+                  Go to Login
+                </button>
+              </div>
+            </>
+          )}
+        </section>
       </div>
-    </div>
+    </main>
   );
 }
