@@ -506,7 +506,7 @@ export function OnboardingPage({
   ) => {
     if (skillsLoading) {
       return (
-        <div className="rounded-xl border border-slate-700 bg-slate-950 p-6 text-center text-sm text-slate-400">
+        <div className="rounded-2xl border border-[#2F3338] bg-[#0B0F14] p-6 text-center text-xs text-slate-400 animate-pulse">
           Loading skills from LearnX...
         </div>
       );
@@ -514,9 +514,8 @@ export function OnboardingPage({
 
     if (skills.length === 0) {
       return (
-        <div className="rounded-xl border border-rose-800/50 bg-rose-950/20 p-6 text-sm text-rose-200">
-          No active skills are available. Please check the backend and
-          database connection.
+        <div className="rounded-2xl border border-rose-800/60 bg-rose-950/30 p-6 text-xs text-rose-300">
+          No active skills are available. Please check the backend and database connection.
         </div>
       );
     }
@@ -538,12 +537,12 @@ export function OnboardingPage({
                   ? toggleLearnSkill(skill)
                   : toggleShareSkill(skill)
               }
-              className={`rounded-xl border p-4 text-left transition-colors ${
+              className={`rounded-xl border p-4 text-left transition-all ${
                 selected
                   ? type === 'learn'
-                    ? 'border-cyan-500/70 bg-cyan-950/30'
-                    : 'border-emerald-500/70 bg-emerald-950/30'
-                  : 'border-slate-700 bg-slate-900/60 hover:border-slate-500'
+                    ? 'border-[#4169E1] bg-[#123A8C]/25 text-white shadow-xs'
+                    : 'border-emerald-500 bg-emerald-950/30 text-white shadow-xs'
+                  : 'border-[#2F3338] bg-[#121720]/70 hover:border-slate-500 hover:bg-[#121720]'
               }`}
             >
               <div className="flex items-start justify-between gap-3">
@@ -553,7 +552,7 @@ export function OnboardingPage({
                   </p>
 
                   {skill.category && (
-                    <p className="mt-1 text-[10px] text-slate-500">
+                    <p className="mt-1 text-[10px] text-slate-400 uppercase tracking-wider">
                       {skill.category}
                     </p>
                   )}
@@ -563,15 +562,15 @@ export function OnboardingPage({
                   <CheckCircle2
                     className={`h-5 w-5 shrink-0 ${
                       type === 'learn'
-                        ? 'text-cyan-300'
-                        : 'text-emerald-300'
+                        ? 'text-[#4169E1]'
+                        : 'text-emerald-400'
                     }`}
                   />
                 )}
               </div>
 
               {skill.description && (
-                <p className="mt-2 line-clamp-2 text-xs text-slate-400">
+                <p className="mt-2 line-clamp-2 text-xs text-slate-400 leading-relaxed">
                   {skill.description}
                 </p>
               )}
@@ -585,7 +584,7 @@ export function OnboardingPage({
   const renderLearnSkillDetails = () => {
     if (learnSkills.length === 0) {
       return (
-        <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/50 p-5 text-sm text-slate-500">
+        <div className="rounded-2xl border border-dashed border-[#2F3338] bg-[#0B0F14]/50 p-5 text-xs text-slate-500">
           No learning skills selected yet.
         </div>
       );
@@ -596,7 +595,7 @@ export function OnboardingPage({
         {learnSkills.map((skill) => (
           <div
             key={skill.skill_id}
-            className="rounded-xl border border-slate-700 bg-slate-900/70 p-4"
+            className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-4 shadow-sm"
           >
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm font-semibold text-white">
@@ -609,14 +608,14 @@ export function OnboardingPage({
                   id: skill.skill_id,
                   name: skill.name,
                 })}
-                className="text-slate-500 hover:text-white"
+                className="text-slate-500 hover:text-white transition-colors"
                 aria-label={`Remove ${skill.name}`}
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <label className="mt-3 block text-xs font-semibold text-slate-400">
+            <label className="mt-3 block text-xs font-semibold text-slate-300">
               Current Level
               <select
                 value={skill.level}
@@ -626,10 +625,10 @@ export function OnboardingPage({
                     event.target.value as SkillLevel
                   )
                 }
-                className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
               >
                 {SKILL_LEVELS.map((level) => (
-                  <option key={level.value} value={level.value}>
+                  <option key={level.value} value={level.value} className="bg-[#0B0F14] text-white">
                     {level.label}
                   </option>
                 ))}
@@ -644,7 +643,7 @@ export function OnboardingPage({
   const renderShareSkillDetails = () => {
     if (shareSkills.length === 0) {
       return (
-        <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/50 p-5 text-sm text-slate-500">
+        <div className="rounded-2xl border border-dashed border-[#2F3338] bg-[#0B0F14]/50 p-5 text-xs text-slate-500">
           No sharing skills selected yet.
         </div>
       );
@@ -655,7 +654,7 @@ export function OnboardingPage({
         {shareSkills.map((skill) => (
           <section
             key={skill.skill_id}
-            className="rounded-xl border border-emerald-800/50 bg-slate-900/70 p-5"
+            className="rounded-2xl border border-emerald-800/60 bg-[#121720]/80 p-5 sm:p-6 shadow-sm"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -663,7 +662,7 @@ export function OnboardingPage({
                   {skill.name}
                 </h3>
 
-                <p className="mt-1 text-[10px] text-slate-500">
+                <p className="mt-0.5 text-[10px] text-slate-400">
                   Knowledge sharing details
                 </p>
               </div>
@@ -676,7 +675,7 @@ export function OnboardingPage({
                     name: skill.name,
                   })
                 }
-                className="text-slate-500 hover:text-white"
+                className="text-slate-500 hover:text-white transition-colors"
                 aria-label={`Remove ${skill.name}`}
               >
                 <X className="h-4 w-4" />
@@ -695,10 +694,10 @@ export function OnboardingPage({
                       event.target.value
                     )
                   }
-                  className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white"
+                  className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
                 >
                   {SKILL_LEVELS.map((level) => (
-                    <option key={level.value} value={level.value}>
+                    <option key={level.value} value={level.value} className="bg-[#0B0F14] text-white">
                       {level.label}
                     </option>
                   ))}
@@ -717,7 +716,7 @@ export function OnboardingPage({
                     )
                   }
                   placeholder="Example: 2 years"
-                  className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+                  className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
                 />
               </label>
 
@@ -734,7 +733,7 @@ export function OnboardingPage({
                   }
                   rows={3}
                   placeholder={`Describe what you can teach in ${skill.name}...`}
-                  className="mt-1.5 w-full resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+                  className="mt-1.5 w-full resize-none rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
                 />
               </label>
 
@@ -760,7 +759,7 @@ export function OnboardingPage({
                         className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
                           selected
                             ? 'border-emerald-500 bg-emerald-950/40 text-emerald-200'
-                            : 'border-slate-700 text-slate-400 hover:border-slate-500'
+                            : 'border-[#2F3338] bg-[#0B0F14] text-slate-400 hover:border-slate-500'
                         }`}
                       >
                         {item}
@@ -783,11 +782,11 @@ export function OnboardingPage({
                   }
                   rows={2}
                   placeholder="Optional: certificate, project, work experience, portfolio, etc."
-                  className="mt-1.5 w-full resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+                  className="mt-1.5 w-full resize-none rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
                 />
               </label>
 
-              <label className="flex items-start gap-2 text-xs text-slate-300 sm:col-span-2">
+              <label className="flex items-start gap-2 text-xs text-slate-300 sm:col-span-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={skill.beginner_friendly}
@@ -810,12 +809,14 @@ export function OnboardingPage({
 
   const renderStepThree = () => (
     <div className="space-y-5">
-      <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <section className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-5 sm:p-6 shadow-md">
         <div className="flex items-center gap-3">
-          <Clock3 className="h-5 w-5 text-cyan-300" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1]">
+            <Clock3 className="h-5 w-5" />
+          </div>
 
           <div>
-            <h2 className="text-sm font-bold text-white">
+            <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
               Availability
             </h2>
 
@@ -825,7 +826,7 @@ export function OnboardingPage({
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="text-xs font-semibold text-slate-300">
             Status
             <select
@@ -838,10 +839,10 @@ export function OnboardingPage({
                     | 'INACTIVE',
                 }))
               }
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white"
+              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             >
-              <option value="ACTIVE">Active / Available</option>
-              <option value="INACTIVE">Inactive / Unavailable</option>
+              <option value="ACTIVE" className="bg-[#0B0F14] text-white">Active / Available</option>
+              <option value="INACTIVE" className="bg-[#0B0F14] text-white">Inactive / Unavailable</option>
             </select>
           </label>
 
@@ -855,10 +856,10 @@ export function OnboardingPage({
                   timezone: event.target.value,
                 }))
               }
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white"
+              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             >
               {TIMEZONES.map((timezone) => (
-                <option key={timezone} value={timezone}>
+                <option key={timezone} value={timezone} className="bg-[#0B0F14] text-white">
                   {timezone}
                 </option>
               ))}
@@ -876,7 +877,7 @@ export function OnboardingPage({
                   available_from: event.target.value,
                 }))
               }
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white"
+              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </label>
 
@@ -891,18 +892,20 @@ export function OnboardingPage({
                   available_until: event.target.value,
                 }))
               }
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white"
+              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </label>
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <section className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-5 sm:p-6 shadow-md">
         <div className="flex items-center gap-3">
-          <UserRound className="h-5 w-5 text-cyan-300" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1]">
+            <UserRound className="h-5 w-5" />
+          </div>
 
           <div>
-            <h2 className="text-sm font-bold text-white">
+            <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
               Profile Introduction
             </h2>
 
@@ -917,16 +920,18 @@ export function OnboardingPage({
           onChange={(event) => setBio(event.target.value)}
           rows={4}
           placeholder="Write a short introduction..."
-          className="mt-4 w-full resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+          className="mt-4 w-full resize-none rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
         />
       </section>
 
-      <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <section className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-5 sm:p-6 shadow-md">
         <div className="flex items-center gap-3">
-          <Globe2 className="h-5 w-5 text-cyan-300" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1]">
+            <Globe2 className="h-5 w-5" />
+          </div>
 
           <div>
-            <h2 className="text-sm font-bold text-white">
+            <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
               Preferred Language
             </h2>
 
@@ -939,20 +944,22 @@ export function OnboardingPage({
         <select
           value={language}
           onChange={(event) => setLanguage(event.target.value)}
-          className="mt-4 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white"
+          className="mt-4 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
         >
           {DEFAULT_LANGUAGES.map((item) => (
-            <option key={item}>{item}</option>
+            <option key={item} value={item} className="bg-[#0B0F14] text-white">{item}</option>
           ))}
         </select>
       </section>
 
-      <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <section className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-5 sm:p-6 shadow-md">
         <div className="flex items-center gap-3">
-          <BookOpen className="h-5 w-5 text-cyan-300" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1]">
+            <BookOpen className="h-5 w-5" />
+          </div>
 
           <div>
-            <h2 className="text-sm font-bold text-white">
+            <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
               Learning Goal
             </h2>
 
@@ -970,7 +977,7 @@ export function OnboardingPage({
               onChange={(event) => setLearningGoal(event.target.value)}
               rows={3}
               placeholder="Example: I want to learn Python for data analysis."
-              className="mt-1.5 w-full resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+              className="mt-1.5 w-full resize-none rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </label>
 
@@ -983,10 +990,10 @@ export function OnboardingPage({
                   event.target.value as SkillLevel
                 )
               }
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white"
+              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             >
               {SKILL_LEVELS.map((level) => (
-                <option key={level.value} value={level.value}>
+                <option key={level.value} value={level.value} className="bg-[#0B0F14] text-white">
                   {level.label}
                 </option>
               ))}
@@ -1001,7 +1008,7 @@ export function OnboardingPage({
                 setLearningSchedule(event.target.value)
               }
               placeholder="Example: Weekdays 6 PM - 8 PM"
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </label>
 
@@ -1013,19 +1020,21 @@ export function OnboardingPage({
                 setLearningInterests(event.target.value)
               }
               placeholder="Example: AI, Web Development, Data Science"
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </label>
         </div>
       </section>
 
       {isMentor && (
-        <section className="rounded-xl border border-emerald-800/50 bg-emerald-950/10 p-5">
+        <section className="rounded-2xl border border-emerald-800/60 bg-[#121720]/80 p-5 sm:p-6 shadow-md">
           <div className="flex items-center gap-3">
-            <GraduationCap className="h-5 w-5 text-emerald-300" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-emerald-400">
+              <GraduationCap className="h-5 w-5" />
+            </div>
 
             <div>
-              <h2 className="text-sm font-bold text-white">
+              <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
                 Mentor Details
               </h2>
 
@@ -1044,7 +1053,7 @@ export function OnboardingPage({
                   setExperience(event.target.value)
                 }
                 placeholder="Example: 2 years teaching Python"
-                className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+                className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
               />
             </label>
 
@@ -1065,7 +1074,7 @@ export function OnboardingPage({
                       className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
                         selected
                           ? 'border-emerald-500 bg-emerald-950/40 text-emerald-200'
-                          : 'border-slate-700 text-slate-400 hover:border-slate-500'
+                          : 'border-[#2F3338] bg-[#0B0F14] text-slate-400 hover:border-slate-500'
                       }`}
                     >
                       {item}
@@ -1079,27 +1088,28 @@ export function OnboardingPage({
       )}
 
       {aiSuggested.length > 0 && (
-        <section className="rounded-xl border border-cyan-800/50 bg-cyan-950/10 p-5">
+        <section className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-5 sm:p-6 shadow-md">
           <div className="flex items-center gap-3">
-            <Lightbulb className="h-5 w-5 text-cyan-300" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1]">
+              <Lightbulb className="h-5 w-5" />
+            </div>
 
             <div>
-              <h2 className="text-sm font-bold text-white">
+              <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
                 AI Suggested Skills
               </h2>
 
               <p className="text-xs text-slate-400">
-                Review and confirm suggestions before they are added to
-                your profile.
+                Review and confirm suggestions before they are added to your profile.
               </p>
             </div>
           </div>
 
-          <div className="mt-4 space-y-2">
+          <div className="mt-4 space-y-2.5">
             {aiSuggested.map((suggestion) => (
               <div
                 key={suggestion.skill_id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-950 p-3"
+                className="flex items-center justify-between gap-3 rounded-xl border border-[#2F3338] bg-[#0B0F14] p-3.5"
               >
                 <div>
                   <p className="text-sm font-semibold text-white">
@@ -1107,7 +1117,7 @@ export function OnboardingPage({
                   </p>
 
                   {suggestion.reason && (
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="mt-0.5 text-xs text-slate-400">
                       {suggestion.reason}
                     </p>
                   )}
@@ -1139,7 +1149,7 @@ export function OnboardingPage({
                       )
                     );
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-700 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-950/40"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#4169E1]/40 bg-[#123A8C]/30 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:bg-[#123A8C]/50 transition-all shadow-xs"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Add
@@ -1154,15 +1164,15 @@ export function OnboardingPage({
 
   if (completed) {
     return (
-      <main className="mx-auto flex min-h-[75vh] max-w-xl items-center px-4 py-12">
-        <section className="w-full rounded-xl border border-emerald-800/50 bg-slate-900/70 p-8 text-center">
-          <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-300" />
+      <main className="mx-auto flex min-h-[75vh] max-w-xl items-center px-4 py-12 bg-[#0B0F14]">
+        <section className="w-full rounded-2xl border border-emerald-800/60 bg-[#121720]/90 p-8 text-center shadow-2xl backdrop-blur-md">
+          <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" />
 
-          <h1 className="mt-4 text-2xl font-bold text-white">
+          <h1 className="mt-4 text-2xl font-bold text-white font-['Space_Grotesk']">
             Onboarding Complete!
           </h1>
 
-          <p className="mt-2 text-sm text-slate-300">
+          <p className="mt-2 text-xs sm:text-sm text-slate-300">
             Your LearnX profile is ready.
           </p>
 
@@ -1175,39 +1185,38 @@ export function OnboardingPage({
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+    <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 bg-[#0B0F14]">
       <header className="mb-6">
-        <p className="text-xs font-semibold uppercase text-cyan-300">
+        <p className="text-xs font-semibold uppercase tracking-wider text-[#4169E1]">
           LearnX Onboarding
         </p>
 
-        <h1 className="mt-2 text-2xl font-bold text-white sm:text-3xl">
+        <h1 className="mt-2 text-2xl sm:text-3xl font-bold text-white font-['Space_Grotesk']">
           {isMentor
             ? 'Set up your Knowledge Sharer profile'
             : 'Set up your learning profile'}
         </h1>
 
-        <p className="mt-2 text-sm text-slate-400">
-          Tell LearnX what you want to learn, what you can share, and
-          when you are available.
+        <p className="mt-1.5 text-xs sm:text-sm text-slate-400">
+          Tell LearnX what you want to learn, what you can share, and when you are available.
         </p>
       </header>
 
-      <div className="mb-6 grid grid-cols-3 gap-2">
+      <div className="mb-8 grid grid-cols-3 gap-3">
         {[1, 2, 3].map((item) => (
           <div key={item}>
             <div
-              className={`h-1.5 rounded-full ${
+              className={`h-1.5 rounded-full transition-all ${
                 item <= step
-                  ? 'bg-cyan-500'
-                  : 'bg-slate-800'
+                  ? 'bg-gradient-to-r from-[#4169E1] to-[#123A8C]'
+                  : 'bg-[#2F3338]'
               }`}
             />
 
             <p
-              className={`mt-2 text-[10px] font-semibold ${
+              className={`mt-2 text-[10px] font-semibold tracking-wider uppercase ${
                 item === step
-                  ? 'text-cyan-300'
+                  ? 'text-blue-300'
                   : 'text-slate-500'
               }`}
             >
@@ -1220,24 +1229,30 @@ export function OnboardingPage({
       {error && (
         <div
           role="alert"
-          className="mb-5 rounded-lg border border-rose-800/50 bg-rose-950/30 p-3 text-xs text-rose-200"
+          className="mb-6 rounded-xl border border-rose-800/60 bg-rose-950/40 p-3.5 text-xs text-rose-300 backdrop-blur-sm"
         >
           {error}
         </div>
       )}
 
       {step === 1 && (
-        <section className="space-y-5 rounded-xl border border-slate-800 bg-slate-900/60 p-5 sm:p-7">
+        <section className="space-y-6 rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-6 sm:p-8 backdrop-blur-md shadow-2xl">
           <div>
             <div className="flex items-center gap-3">
-              {isMentor ? (
-                <GraduationCap className="h-6 w-6 text-emerald-300" />
-              ) : (
-                <BookOpen className="h-6 w-6 text-cyan-300" />
-              )}
+              <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${
+                isMentor 
+                  ? 'bg-emerald-950/40 border border-emerald-800/60 text-emerald-400' 
+                  : 'bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1]'
+              }`}>
+                {isMentor ? (
+                  <GraduationCap className="h-6 w-6" />
+                ) : (
+                  <BookOpen className="h-6 w-6" />
+                )}
+              </div>
 
               <div>
-                <h2 className="text-lg font-bold text-white">
+                <h2 className="text-lg font-bold text-white font-['Space_Grotesk']">
                   {isMentor
                     ? 'What skills will you share?'
                     : 'What do you want to learn?'}
@@ -1256,9 +1271,9 @@ export function OnboardingPage({
             ? renderSkillGrid('share')
             : renderSkillGrid('learn')}
 
-          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-400">
+          <div className="rounded-xl border border-[#2F3338] bg-[#0B0F14] p-3 text-xs text-slate-400">
             Selected:{' '}
-            <strong className="text-white">
+            <strong className="text-white font-semibold">
               {isMentor
                 ? shareSkills.length
                 : learnSkills.length}
@@ -1266,8 +1281,8 @@ export function OnboardingPage({
           </div>
 
           {isMentor && shareSkills.length > 0 && (
-            <div>
-              <h3 className="mb-3 text-sm font-bold text-white">
+            <div className="pt-2">
+              <h3 className="mb-3 text-sm font-bold text-white font-['Space_Grotesk']">
                 Share Skill Details
               </h3>
 
@@ -1278,16 +1293,22 @@ export function OnboardingPage({
       )}
 
       {step === 2 && (
-        <section className="space-y-5 rounded-xl border border-slate-800 bg-slate-900/60 p-5 sm:p-7">
+        <section className="space-y-6 rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-6 sm:p-8 backdrop-blur-md shadow-2xl">
           <div className="flex items-center gap-3">
-            {isMentor ? (
-              <BookOpen className="h-6 w-6 text-cyan-300" />
-            ) : (
-              <GraduationCap className="h-6 w-6 text-emerald-300" />
-            )}
+            <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${
+              isMentor 
+                ? 'bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1]'
+                : 'bg-emerald-950/40 border border-emerald-800/60 text-emerald-400'
+            }`}>
+              {isMentor ? (
+                <BookOpen className="h-6 w-6" />
+              ) : (
+                <GraduationCap className="h-6 w-6" />
+              )}
+            </div>
 
             <div>
-              <h2 className="text-lg font-bold text-white">
+              <h2 className="text-lg font-bold text-white font-['Space_Grotesk']">
                 {isMentor
                   ? 'What would you like to learn?'
                   : 'Do you also want to share a skill?'}
@@ -1305,16 +1326,16 @@ export function OnboardingPage({
             <>
               {renderSkillGrid('learn')}
 
-              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-400">
+              <div className="rounded-xl border border-[#2F3338] bg-[#0B0F14] p-3 text-xs text-slate-400">
                 Selected learning skills:{' '}
-                <strong className="text-white">
+                <strong className="text-white font-semibold">
                   {learnSkills.length}
                 </strong>
               </div>
 
               {learnSkills.length > 0 && (
-                <div>
-                  <h3 className="mb-3 text-sm font-bold text-white">
+                <div className="pt-2">
+                  <h3 className="mb-3 text-sm font-bold text-white font-['Space_Grotesk']">
                     Current Learning Levels
                   </h3>
 
@@ -1326,16 +1347,16 @@ export function OnboardingPage({
             <>
               {renderSkillGrid('share')}
 
-              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-400">
+              <div className="rounded-xl border border-[#2F3338] bg-[#0B0F14] p-3 text-xs text-slate-400">
                 Sharing skills selected:{' '}
-                <strong className="text-white">
+                <strong className="text-white font-semibold">
                   {shareSkills.length}
                 </strong>
               </div>
 
               {shareSkills.length > 0 && (
-                <div>
-                  <h3 className="mb-3 text-sm font-bold text-white">
+                <div className="pt-2">
+                  <h3 className="mb-3 text-sm font-bold text-white font-['Space_Grotesk']">
                     Share Skill Details
                   </h3>
 
@@ -1349,12 +1370,12 @@ export function OnboardingPage({
 
       {step === 3 && renderStepThree()}
 
-      <div className="mt-6 flex items-center justify-between gap-3">
+      <div className="mt-8 flex items-center justify-between gap-3">
         <button
           type="button"
           onClick={handleBack}
           disabled={loading}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:border-slate-500 hover:text-white disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl border border-[#2F3338] bg-[#0B0F14] px-4 py-2.5 text-xs font-semibold text-slate-300 hover:border-slate-500 hover:text-white transition-all disabled:opacity-50"
         >
           <ArrowLeft className="h-4 w-4" />
           Back
@@ -1365,7 +1386,7 @@ export function OnboardingPage({
             type="button"
             onClick={handleNext}
             disabled={loading || skillsLoading}
-            className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:from-cyan-500 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] px-5 py-2.5 text-xs font-semibold text-white shadow-md shadow-[#4169E1]/20 hover:from-[#5278ef] hover:to-[#1746a2] transition-all disabled:cursor-not-allowed disabled:opacity-50"
           >
             Continue
             <ArrowRight className="h-4 w-4" />
@@ -1375,7 +1396,7 @@ export function OnboardingPage({
             type="button"
             onClick={() => void handleFinish()}
             disabled={loading}
-            className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-600 to-cyan-600 px-5 py-2.5 text-sm font-semibold text-white hover:from-emerald-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] px-6 py-2.5 text-xs font-semibold text-white shadow-md shadow-[#4169E1]/25 hover:from-[#5278ef] hover:to-[#1746a2] transition-all disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? 'Saving...' : 'Complete Onboarding'}
             <CheckCircle2 className="h-4 w-4" />
@@ -1383,9 +1404,8 @@ export function OnboardingPage({
         )}
       </div>
 
-      <p className="mt-5 text-center text-[10px] text-slate-600">
-        LearnX uses your selected skills, language, availability, and
-        goals to help create relevant learning matches.
+      <p className="mt-5 text-center text-[11px] text-slate-500">
+        LearnX uses your selected skills, language, availability, and goals to help create relevant learning matches.
       </p>
     </main>
   );

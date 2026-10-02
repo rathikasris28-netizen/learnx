@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import {
   Sparkles,
@@ -55,39 +54,36 @@ export function RecommendationsPage({
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       <div>
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/40 border border-cyan-800/40 text-cyan-300 text-xs font-semibold mb-2">
-          <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#123A8C]/25 border border-[#123A8C]/50 text-[#4169E1] text-xs font-semibold mb-2">
+          <Sparkles className="h-3.5 w-3.5 text-[#4169E1]" />
           <span>Algorithmic Compatibility Breakdown</span>
         </div>
 
-        <h1 className="text-2xl sm:text-3xl font-bold text-white font-['Space_Grotesk']">
+        <h1 className="text-2xl sm:text-3xl font-bold text-white font-['Space_Grotesk'] tracking-tight">
           AI-Assisted Peer Matching
         </h1>
 
-        <p className="text-xs text-slate-400 mt-1">
-          Recommendations calculated by matching your
-          target skills with verified peer sharers,
-          complementary skill proficiency, schedule
-          overlap, language compatibility, and platform
+        <p className="text-xs text-slate-400 mt-1 max-w-3xl leading-relaxed">
+          Recommendations calculated by matching your target skills with verified peer sharers,
+          complementary skill proficiency, schedule overlap, language compatibility, and platform
           trust metrics.
         </p>
       </div>
 
       {loading ? (
-        <div className="py-16 text-center text-xs text-slate-500">
-          Calculating match percentages across verified
-          knowledge sharers...
+        <div className="py-16 text-center text-xs text-slate-400">
+          <div className="inline-block h-6 w-6 rounded-full border-2 border-[#2F3338] border-t-[#4169E1] animate-spin mb-3" />
+          <p>Calculating match percentages across verified knowledge sharers...</p>
         </div>
       ) : matches.length === 0 ? (
-        <div className="py-16 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 p-8 space-y-3">
-          <p className="text-xs text-slate-400">
-            No matching knowledge sharers found for your
-            current profile.
+        <div className="py-16 text-center rounded-2xl border border-dashed border-[#2F3338] bg-[#0B0F14]/60 p-8 space-y-3">
+          <p className="text-xs text-slate-300">
+            No matching knowledge sharers found for your current profile.
           </p>
 
           <button
             onClick={() => navigate('/discover')}
-            className="px-5 py-2.5 rounded-xl bg-cyan-500 text-white font-semibold text-xs hover:bg-cyan-400 transition-colors"
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] text-white font-semibold text-xs shadow-md shadow-[#4169E1]/20 hover:from-[#5278f2] hover:to-[#1746a2] transition-all"
           >
             Browse Full Skill Catalog
           </button>
@@ -97,15 +93,14 @@ export function RecommendationsPage({
           {matches.map((candidate, index) => (
             <div
               key={`${candidate.user_id}-${candidate.skill_id || ''}-${index}`}
-              className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 flex flex-col justify-between space-y-4 hover:border-slate-700 transition-all shadow-md"
+              className="rounded-2xl border border-[#2F3338] bg-[#0B0F14]/90 p-6 flex flex-col justify-between space-y-4 hover:border-[#123A8C] transition-all shadow-xl backdrop-blur-sm"
             >
               <div className="space-y-4">
                 {/* Header */}
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="h-11 w-11 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-sm text-white uppercase">
-                      {candidate.full_name?.slice(0, 2) ||
-                        'LX'}
+                    <div className="h-11 w-11 rounded-full bg-gradient-to-br from-[#123A8C] to-[#0B0F14] border border-[#2F3338] flex items-center justify-center font-bold text-sm text-white uppercase shadow-sm">
+                      {candidate.full_name?.slice(0, 2) || 'LX'}
                     </div>
 
                     <div>
@@ -114,16 +109,14 @@ export function RecommendationsPage({
                       </h3>
 
                       <p className="text-xs text-slate-400">
-                        {candidate.city
-                          ? `${candidate.city}, `
-                          : ''}
+                        {candidate.city ? `${candidate.city}, ` : ''}
                         {candidate.preferred_language}
                       </p>
                     </div>
                   </div>
 
                   <div className="text-right">
-                    <span className="inline-block px-2.5 py-1 rounded-lg bg-cyan-950 border border-cyan-800/60 text-cyan-300 font-extrabold text-sm">
+                    <span className="inline-block px-2.5 py-1 rounded-lg bg-[#123A8C]/30 border border-[#4169E1]/50 text-[#4169E1] font-extrabold text-sm">
                       {candidate.match_percentage}%
                     </span>
 
@@ -134,7 +127,7 @@ export function RecommendationsPage({
                 </div>
 
                 {/* Skill Details */}
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 text-xs">
+                <div className="p-3 rounded-xl bg-[#0B0F14] border border-[#2F3338] space-y-1.5 text-xs">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-slate-400">
                       Sharing Skill:
@@ -150,7 +143,7 @@ export function RecommendationsPage({
                       Skill Level:
                     </span>
 
-                    <span className="text-cyan-400 font-medium">
+                    <span className="text-[#4169E1] font-medium">
                       {candidate.skill_level}
                     </span>
                   </div>
@@ -163,15 +156,9 @@ export function RecommendationsPage({
                     <span className="text-emerald-400 font-medium text-right">
                       {candidate.availability_status}{' '}
                       (
-                      {candidate.available_from?.slice(
-                        0,
-                        5
-                      )}{' '}
+                      {candidate.available_from?.slice(0, 5)}{' '}
                       -{' '}
-                      {candidate.available_until?.slice(
-                        0,
-                        5
-                      )}
+                      {candidate.available_until?.slice(0, 5)}
                       )
                     </span>
                   </div>
@@ -183,7 +170,7 @@ export function RecommendationsPage({
                     Why Recommended:
                   </span>
 
-                  <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/40 p-3 rounded-xl border border-slate-800/60">
+                  <p className="text-xs text-slate-300 leading-relaxed bg-[#0B0F14] p-3 rounded-xl border border-[#2F3338]">
                     {candidate.why_recommended ||
                       'Matched using your profile, selected skills, availability, and platform matching data.'}
                   </p>
@@ -191,7 +178,7 @@ export function RecommendationsPage({
 
                 {/* Trust & Reliability Grid */}
                 <div className="grid grid-cols-3 gap-2 text-center pt-1">
-                  <div className="p-2 rounded-lg bg-slate-950/40 border border-slate-800/60">
+                  <div className="p-2 rounded-lg bg-[#0B0F14] border border-[#2F3338]">
                     <div className="text-[10px] text-slate-400">
                       Rating
                     </div>
@@ -200,14 +187,12 @@ export function RecommendationsPage({
                       <Star className="h-3 w-3 fill-current" />
 
                       <span>
-                        {Number(
-                          candidate.rating_avg
-                        ).toFixed(1)}
+                        {Number(candidate.rating_avg).toFixed(1)}
                       </span>
                     </div>
                   </div>
 
-                  <div className="p-2 rounded-lg bg-slate-950/40 border border-slate-800/60">
+                  <div className="p-2 rounded-lg bg-[#0B0F14] border border-[#2F3338]">
                     <div className="text-[10px] text-slate-400">
                       Reliability
                     </div>
@@ -217,12 +202,12 @@ export function RecommendationsPage({
                     </div>
                   </div>
 
-                  <div className="p-2 rounded-lg bg-slate-950/40 border border-slate-800/60">
+                  <div className="p-2 rounded-lg bg-[#0B0F14] border border-[#2F3338]">
                     <div className="text-[10px] text-slate-400">
                       Trust
                     </div>
 
-                    <div className="text-xs font-bold text-purple-400 mt-0.5">
+                    <div className="text-xs font-bold text-[#4169E1] mt-0.5">
                       {candidate.trust_score}%
                     </div>
                   </div>
@@ -240,7 +225,7 @@ export function RecommendationsPage({
                     )}`
                   )
                 }
-                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 transition-all flex items-center justify-center gap-2"
+                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] text-white font-semibold text-xs shadow-md shadow-[#4169E1]/20 hover:from-[#5278f2] hover:to-[#1746a2] active:scale-[0.99] transition-all flex items-center justify-center gap-2"
               >
                 <span>Select Slot & Book Session</span>
                 <ArrowRight className="h-3.5 w-3.5" />

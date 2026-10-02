@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 
 import {
@@ -45,64 +44,68 @@ function RegistrationChooser({
   navigate: (path: string) => void;
 }) {
   return (
-    <main className="mx-auto flex min-h-[75vh] max-w-4xl items-center px-4 py-12 sm:px-6">
+    <main className="mx-auto flex min-h-[75vh] max-w-4xl items-center px-4 py-12 sm:px-6 bg-[#0B0F14]">
       <div className="w-full space-y-8">
         <header className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 text-lg font-extrabold text-white">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-[#4169E1] to-[#123A8C] text-lg font-extrabold text-white shadow-lg shadow-[#4169E1]/25 border border-[#4169E1]/40">
             LX
           </div>
 
-          <p className="text-xs font-semibold uppercase text-cyan-300">
+          <p className="text-xs font-semibold uppercase tracking-wider text-[#4169E1]">
             Join LearnX
           </p>
 
-          <h1 className="mt-2 text-2xl font-bold text-white sm:text-3xl">
+          <h1 className="mt-2 text-2xl sm:text-4xl font-bold text-white font-['Space_Grotesk']">
             Choose how you want to participate
           </h1>
         </header>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-5 md:grid-cols-2">
           <button
             type="button"
             onClick={() => navigate('/register/learner')}
-            className="group flex min-h-52 flex-col items-start rounded-xl border border-slate-700 bg-slate-900/70 p-6 text-left transition-colors hover:border-cyan-500/70 hover:bg-slate-900"
+            className="group flex min-h-56 flex-col items-start rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-7 text-left transition-all hover:border-[#4169E1]/60 hover:bg-[#121720] hover:shadow-[0_4px_24px_rgba(18,58,140,0.25)] backdrop-blur-md"
           >
-            <BookOpen className="h-6 w-6 text-cyan-300" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#123A8C]/25 text-[#4169E1] border border-[#4169E1]/30 mb-2">
+              <BookOpen className="h-5 w-5" />
+            </div>
 
-            <span className="mt-4 text-lg font-bold text-white">
+            <span className="mt-3 text-lg font-bold text-white font-['Space_Grotesk']">
               Join as Learner
             </span>
 
-            <span className="mt-2 text-sm text-slate-300">
+            <span className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed">
               Learn skills from other members and use Time Credits to access
               learning sessions.
             </span>
 
-            <span className="mt-auto pt-5 text-xs font-semibold text-cyan-300">
+            <span className="mt-auto pt-6 text-xs font-semibold text-[#4169E1] group-hover:text-blue-300 flex items-center gap-1.5 transition-colors">
               New Learners receive 5 Time Credits{' '}
-              <ArrowRight className="ml-1 inline h-4 w-4" />
+              <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
             </span>
           </button>
 
           <button
             type="button"
             onClick={() => navigate('/register/mentor')}
-            className="group flex min-h-52 flex-col items-start rounded-xl border border-slate-700 bg-slate-900/70 p-6 text-left transition-colors hover:border-emerald-500/70 hover:bg-slate-900"
+            className="group flex min-h-56 flex-col items-start rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-7 text-left transition-all hover:border-[#4169E1]/60 hover:bg-[#121720] hover:shadow-[0_4px_24px_rgba(18,58,140,0.25)] backdrop-blur-md"
           >
-            <BriefcaseBusiness className="h-6 w-6 text-emerald-300" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#123A8C]/25 text-[#4169E1] border border-[#4169E1]/30 mb-2">
+              <BriefcaseBusiness className="h-5 w-5" />
+            </div>
 
-            <span className="mt-4 text-lg font-bold text-white">
+            <span className="mt-3 text-lg font-bold text-white font-['Space_Grotesk']">
               Join as Mentor / Knowledge Sharer
             </span>
 
-            <span className="mt-2 text-sm text-slate-300">
+            <span className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed">
               Share your skills with learners and earn Time Credits through
               verified sessions.
             </span>
 
-            <span className="mt-auto pt-5 text-xs font-semibold text-emerald-300">
+            <span className="mt-auto pt-6 text-xs font-semibold text-emerald-400 group-hover:text-emerald-300 flex items-center gap-1.5 transition-colors">
               Start with 0 Time Credits{' '}
-              <ArrowRight className="ml-1 inline h-4 w-4" />
+              <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
             </span>
           </button>
         </div>
@@ -112,7 +115,7 @@ function RegistrationChooser({
           <button
             type="button"
             onClick={() => navigate('/login')}
-            className="font-semibold text-cyan-300 hover:text-white"
+            className="font-semibold text-[#4169E1] hover:text-blue-300 hover:underline"
           >
             Sign in
           </button>
@@ -334,27 +337,27 @@ function RegistrationForm({
 
   if (registration) {
     return (
-      <main className="mx-auto flex min-h-[75vh] max-w-xl items-center px-4 py-12">
-        <section className="w-full space-y-4 rounded-xl border border-emerald-800/50 bg-slate-900/70 p-8 text-center">
-          <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-300" />
+      <main className="mx-auto flex min-h-[75vh] max-w-xl items-center px-4 py-12 bg-[#0B0F14]">
+        <section className="w-full space-y-4 rounded-2xl border border-emerald-800/60 bg-[#121720]/90 p-8 text-center shadow-2xl backdrop-blur-md">
+          <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" />
 
-          <h1 className="text-xl font-bold text-white">
+          <h1 className="text-xl sm:text-2xl font-bold text-white font-['Space_Grotesk']">
             Registration Successful!
           </h1>
 
           {learner ? (
             <>
-              <p className="text-sm text-slate-200">
+              <p className="text-sm text-slate-300">
                 Welcome to LearnX!
               </p>
 
-              <p className="text-sm font-bold text-emerald-300">
+              <p className="text-sm font-bold text-emerald-400">
                 You received: +{registration.welcome_bonus} Time Credits
               </p>
             </>
           ) : (
             <>
-              <p className="text-sm text-slate-200">
+              <p className="text-sm text-slate-300">
                 Welcome to LearnX as a Mentor / Knowledge Sharer.
               </p>
 
@@ -378,34 +381,34 @@ function RegistrationForm({
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-      <div className="mb-5 flex items-center justify-between gap-3">
+    <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6 bg-[#0B0F14]">
+      <div className="mb-6 flex items-center justify-between gap-3">
         <button
           type="button"
           onClick={() => navigate('/register')}
-          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white"
+          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
           Registration options
         </button>
 
-        <span className="rounded-md border border-slate-700 px-2.5 py-1 text-[10px] font-semibold uppercase text-slate-300">
+        <span className="rounded-full border border-[#2F3338] bg-[#123A8C]/25 px-3 py-1 text-xs font-semibold uppercase text-blue-300">
           {learner ? 'Learner' : 'Mentor'}
         </span>
       </div>
 
       <header className="mb-6 space-y-2">
-        <p className="text-xs font-semibold uppercase text-cyan-300">
+        <p className="text-xs font-semibold uppercase tracking-wider text-[#4169E1]">
           Registration
         </p>
 
-        <h1 className="text-2xl font-bold text-white">
+        <h1 className="text-2xl sm:text-3xl font-bold text-white font-['Space_Grotesk']">
           {learner
             ? 'Join as a Learner'
             : 'Join as a Mentor / Knowledge Sharer'}
         </h1>
 
-        <p className="text-sm text-slate-300">
+        <p className="text-xs sm:text-sm text-slate-300">
           {learner
             ? 'Learn skills from other members and use Time Credits to access learning sessions.'
             : 'Share your knowledge with learners and earn Time Credits through verified learning sessions.'}
@@ -413,33 +416,33 @@ function RegistrationForm({
       </header>
 
       {learner ? (
-        <p className="mb-5 rounded-lg border border-amber-700/50 bg-amber-950/30 p-3 text-xs font-semibold text-amber-200">
+        <div className="mb-6 rounded-xl border border-[#4169E1]/30 bg-[#123A8C]/20 p-3.5 text-xs font-semibold text-blue-200 backdrop-blur-sm">
           🎁 New Learners receive 5 Time Credits as a one-time welcome bonus.
-        </p>
+        </div>
       ) : (
-        <p className="mb-5 rounded-lg border border-emerald-800/50 bg-emerald-950/20 p-3 text-xs text-emerald-200">
+        <div className="mb-6 rounded-xl border border-emerald-800/60 bg-emerald-950/30 p-3.5 text-xs text-emerald-200 backdrop-blur-sm">
           Mentors start with 0 Time Credits and earn credits through verified
           sessions. Select the skills you will share below.
-        </p>
+        </div>
       )}
 
       {error && (
-        <p
+        <div
           role="alert"
-          className="mb-4 rounded-lg border border-rose-800/50 bg-rose-950/30 p-3 text-xs text-rose-200"
+          className="mb-5 rounded-xl border border-rose-800/60 bg-rose-950/40 p-3.5 text-xs text-rose-300 backdrop-blur-sm"
         >
           {error}
-        </p>
+        </div>
       )}
 
       <form
         onSubmit={handleSubmit}
-        className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-5 sm:grid-cols-2 sm:p-7"
+        className="grid grid-cols-1 gap-4.5 rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-6 sm:grid-cols-2 sm:p-8 backdrop-blur-md shadow-2xl"
       >
         <label className="text-xs font-semibold text-slate-300">
           Full Name *
           <span className="relative mt-1.5 block">
-            <UserRound className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+            <UserRound className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
 
             <input
               required
@@ -447,7 +450,8 @@ function RegistrationForm({
               autoComplete="name"
               value={values.full_name}
               onChange={update}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white"
+              placeholder="e.g. Alex Johnson"
+              className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] py-2.5 pl-10 pr-3.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </span>
         </label>
@@ -455,7 +459,7 @@ function RegistrationForm({
         <label className="text-xs font-semibold text-slate-300">
           Email *
           <span className="relative mt-1.5 block">
-            <Mail className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+            <Mail className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
 
             <input
               required
@@ -464,7 +468,8 @@ function RegistrationForm({
               autoComplete="email"
               value={values.email}
               onChange={update}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white"
+              placeholder="name@example.com"
+              className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] py-2.5 pl-10 pr-3.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </span>
         </label>
@@ -472,7 +477,7 @@ function RegistrationForm({
         <label className="text-xs font-semibold text-slate-300">
           Password *
           <span className="relative mt-1.5 block">
-            <LockKeyhole className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+            <LockKeyhole className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
 
             <input
               required
@@ -482,20 +487,20 @@ function RegistrationForm({
               name="password"
               value={values.password}
               onChange={update}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white"
+              placeholder="••••••••"
+              className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] py-2.5 pl-10 pr-3.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </span>
 
-          <span className="mt-1 block text-[10px] font-normal text-slate-500">
-            8+ characters, uppercase, lowercase, number, and special
-            character.
+          <span className="mt-1 block text-[10px] font-normal text-slate-400">
+            8+ characters, uppercase, lowercase, number, and special character.
           </span>
         </label>
 
         <label className="text-xs font-semibold text-slate-300">
           Confirm Password *
           <span className="relative mt-1.5 block">
-            <LockKeyhole className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+            <LockKeyhole className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
 
             <input
               required
@@ -504,7 +509,8 @@ function RegistrationForm({
               name="confirm_password"
               value={values.confirm_password}
               onChange={update}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white"
+              placeholder="••••••••"
+              className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] py-2.5 pl-10 pr-3.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </span>
         </label>
@@ -516,7 +522,7 @@ function RegistrationForm({
             name="age_group"
             value={values.age_group}
             onChange={update}
-            className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white"
+            className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
           >
             {[
               'Under 18',
@@ -526,7 +532,7 @@ function RegistrationForm({
               '45-54',
               '55+',
             ].map((age) => (
-              <option key={age}>{age}</option>
+              <option key={age} value={age} className="bg-[#0B0F14] text-white">{age}</option>
             ))}
           </select>
         </label>
@@ -534,14 +540,14 @@ function RegistrationForm({
         <label className="text-xs font-semibold text-slate-300">
           Preferred Language *
           <span className="relative mt-1.5 block">
-            <Globe2 className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+            <Globe2 className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
 
             <select
               required
               name="preferred_language"
               value={values.preferred_language}
               onChange={update}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white"
+              className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] py-2.5 pl-10 pr-3.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             >
               {[
                 'English',
@@ -552,7 +558,7 @@ function RegistrationForm({
                 'Kannada',
                 'Other',
               ].map((language) => (
-                <option key={language}>{language}</option>
+                <option key={language} value={language} className="bg-[#0B0F14] text-white">{language}</option>
               ))}
             </select>
           </span>
@@ -561,7 +567,7 @@ function RegistrationForm({
         <label className="text-xs font-semibold text-slate-300">
           City
           <span className="relative mt-1.5 block">
-            <MapPin className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+            <MapPin className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
 
             <input
               name="city"
@@ -569,7 +575,7 @@ function RegistrationForm({
               value={values.city}
               onChange={update}
               placeholder="Optional"
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-slate-600"
+              className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] py-2.5 pl-10 pr-3.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             />
           </span>
         </label>
@@ -582,21 +588,21 @@ function RegistrationForm({
             value={values.state}
             onChange={update}
             placeholder="Optional"
-            className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+            className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
           />
         </label>
 
         <label className="text-xs font-semibold text-slate-300 sm:col-span-2">
           Education / Work Status *
           <span className="relative mt-1.5 block">
-            <BriefcaseBusiness className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+            <BriefcaseBusiness className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
 
             <select
               required
               name="education_work_status"
               value={values.education_work_status}
               onChange={update}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white"
+              className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] py-2.5 pl-10 pr-3.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
             >
               {[
                 'School Student',
@@ -607,7 +613,7 @@ function RegistrationForm({
                 'Job Seeker',
                 'Other',
               ].map((status) => (
-                <option key={status}>{status}</option>
+                <option key={status} value={status} className="bg-[#0B0F14] text-white">{status}</option>
               ))}
             </select>
           </span>
@@ -625,14 +631,14 @@ function RegistrationForm({
             value={values.profile_photo_url}
             onChange={update}
             placeholder="https://..."
-            className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-600"
+            className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
           />
         </label>
 
         {!learner && (
           <section className="sm:col-span-2">
-            <div className="mb-2">
-              <h2 className="text-sm font-bold text-white">
+            <div className="mb-2.5">
+              <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
                 Skills You Will Share *
               </h2>
 
@@ -643,35 +649,35 @@ function RegistrationForm({
             </div>
 
             {skillsLoading ? (
-              <div className="rounded-lg border border-slate-700 bg-slate-950 p-4 text-center text-xs text-slate-400">
+              <div className="rounded-xl border border-[#2F3338] bg-[#0B0F14] p-4 text-center text-xs text-slate-400 animate-pulse">
                 Loading skills from LearnX...
               </div>
             ) : skills.length === 0 ? (
-              <div className="rounded-lg border border-rose-800/50 bg-rose-950/20 p-4 text-xs text-rose-200">
+              <div className="rounded-xl border border-rose-800/60 bg-rose-950/30 p-4 text-xs text-rose-300">
                 No active skills are available. Please check that the backend
                 and database are connected and that skills exist in the
                 database.
               </div>
             ) : (
-              <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 p-3">
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="max-h-72 overflow-y-auto rounded-xl border border-[#2F3338] bg-[#0B0F14] p-3">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   {skills.map((skill) => {
                     const selected = selectedSkills.includes(skill.id);
 
                     return (
                       <label
                         key={skill.id}
-                        className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                        className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-all ${
                           selected
-                            ? 'border-emerald-500/70 bg-emerald-950/30'
-                            : 'border-slate-800 bg-slate-900/50 hover:border-slate-600'
+                            ? 'border-[#4169E1] bg-[#123A8C]/25 text-white shadow-xs'
+                            : 'border-[#2F3338] bg-[#121720]/60 hover:border-slate-500'
                         }`}
                       >
                         <input
                           type="checkbox"
                           checked={selected}
                           onChange={() => toggleSkill(skill.id)}
-                          className="mt-0.5 h-4 w-4 accent-emerald-500"
+                          className="mt-0.5 h-4 w-4 accent-[#4169E1]"
                         />
 
                         <span className="min-w-0">
@@ -680,7 +686,7 @@ function RegistrationForm({
                           </span>
 
                           {skill.category && (
-                            <span className="mt-0.5 block text-[10px] text-slate-500">
+                            <span className="mt-0.5 block text-[10px] text-slate-400">
                               {skill.category}
                             </span>
                           )}
@@ -692,8 +698,8 @@ function RegistrationForm({
               </div>
             )}
 
-            <p className="mt-2 text-[10px] text-slate-500">
-              Selected skills: {selectedSkills.length}
+            <p className="mt-2 text-[10px] text-slate-400 font-medium">
+              Selected skills: <span className="text-[#4169E1] font-semibold">{selectedSkills.length}</span>
             </p>
           </section>
         )}
@@ -705,7 +711,7 @@ function RegistrationForm({
             name="terms_accepted"
             checked={values.terms_accepted}
             onChange={update}
-            className="mt-0.5 h-4 w-4 accent-cyan-500"
+            className="mt-0.5 h-4 w-4 accent-[#4169E1]"
           />
 
           <span>
@@ -713,7 +719,7 @@ function RegistrationForm({
             <button
               type="button"
               onClick={() => navigate('/terms')}
-              className="font-semibold text-cyan-300 underline"
+              className="font-semibold text-[#4169E1] hover:text-blue-300 underline"
             >
               Terms & Conditions
             </button>{' '}
@@ -721,7 +727,7 @@ function RegistrationForm({
             <button
               type="button"
               onClick={() => navigate('/privacy')}
-              className="font-semibold text-cyan-300 underline"
+              className="font-semibold text-[#4169E1] hover:text-blue-300 underline"
             >
               Privacy Policy
             </button>
@@ -738,19 +744,19 @@ function RegistrationForm({
             !strongPassword ||
             values.password !== values.confirm_password
           }
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 px-5 py-3 text-sm font-semibold text-white hover:from-cyan-500 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] px-5 py-3 text-xs font-semibold text-white shadow-md shadow-[#4169E1]/20 hover:from-[#5278ef] hover:to-[#1746a2] disabled:cursor-not-allowed disabled:opacity-50 transition-all sm:col-span-2"
         >
           {loading ? 'Creating account...' : 'Register'}
           <ArrowRight className="h-4 w-4" />
         </button>
       </form>
 
-      <p className="mt-5 text-center text-xs text-slate-400">
+      <p className="mt-6 text-center text-xs text-slate-400">
         Already registered?{' '}
         <button
           type="button"
           onClick={() => navigate('/login')}
-          className="font-semibold text-cyan-300 hover:text-white"
+          className="font-semibold text-[#4169E1] hover:text-blue-300 hover:underline"
         >
           Sign in
         </button>

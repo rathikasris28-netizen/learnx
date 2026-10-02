@@ -164,7 +164,7 @@ export function ProfilePage({
 
             <p className="text-xs text-slate-400 mt-0.5">
               {user?.email || 'Email unavailable'} · Role:{' '}
-              <span className="text-cyan-400 font-semibold">
+              <span className="text-blue-400 font-semibold">
                 {roleLabel}
               </span>
             </p>
@@ -240,7 +240,7 @@ export function ProfilePage({
                     }
                     required
                     autoComplete="name"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-800 bg-slate-950 text-white focus:outline-none focus:border-cyan-500"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-800 bg-slate-950 text-white focus:outline-none focus:border-blue-500"
                   />
                 </div>
 
@@ -358,7 +358,7 @@ export function ProfilePage({
                   <button
                     type="submit"
                     disabled={saving}
-                    className="px-6 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white font-semibold text-xs shadow-md transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    className="px-6 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs shadow-md transition-colors flex items-center gap-1.5 disabled:opacity-50"
                   >
                     <Save className="h-3.5 w-3.5" />
 
@@ -507,7 +507,7 @@ export function ProfilePage({
           </div>
 
           {/* LearnX Profile Info */}
-          <div className="p-5 rounded-2xl border border-cyan-800/30 bg-cyan-950/20">
+          <div className="p-5 rounded-2xl border border-blue-800/40 bg-blue-950/20">
             <h3 className="text-xs font-bold text-cyan-300 mb-2">
               LearnX Profile
             </h3>

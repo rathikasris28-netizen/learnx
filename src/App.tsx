@@ -80,9 +80,9 @@ function AppContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+      <div className="min-h-screen bg-[#0B0F14] flex items-center justify-center">
         <div className="text-center">
-          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-blue-500" />
+          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-[#2F3338] border-t-[#4169E1]" />
 
           <p className="text-sm text-slate-400">
             Loading LearnX...
@@ -433,7 +433,7 @@ function AppContent() {
     currentPath !== '/reset-password';
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-[#0B0F14] text-white">
       {showAppShell && (
         <Navbar
           currentPath={currentPath}

@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -28,8 +27,6 @@ export function VerifyEmailPage({
     searchParams.get('user_id') ||
     user?.user_id;
 
-  // The backend verification flow uses the token from
-  // the verification email link.
   const tokenParam =
     searchParams.get('token');
 
@@ -97,55 +94,52 @@ export function VerifyEmailPage({
   };
 
   return (
-    <div className="flex min-h-[75vh] items-center justify-center px-4 py-12">
+    <div className="flex min-h-[80vh] items-center justify-center px-4 py-12 bg-[#0B0F14]">
       <div className="w-full max-w-md text-center space-y-6">
-        <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 mx-auto shadow-inner">
+        <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1] mx-auto shadow-inner">
           <Mail className="h-8 w-8" />
         </div>
 
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-white font-['Space_Grotesk']">
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-['Space_Grotesk']">
             Verify Your Email Address
           </h2>
 
-          <p className="mt-2 text-xs text-slate-300 leading-relaxed">
+          <p className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed">
             We sent a verification link to{' '}
-            <strong className="text-white">
+            <strong className="text-white font-semibold">
               {emailParam}
             </strong>
-            .
-            Please verify your email to unlock peer
-            learning sessions and knowledge exchange.
+            . Please verify your email to unlock peer learning sessions and knowledge exchange.
           </p>
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 p-3 rounded-xl border border-rose-500/30 bg-rose-950/40 text-rose-300 text-xs text-left">
+          <div className="flex items-center gap-2.5 p-3.5 rounded-xl border border-rose-800/60 bg-rose-950/40 text-rose-300 text-xs text-left backdrop-blur-sm">
             <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
             <span>{error}</span>
           </div>
         )}
 
         {resendStatus && (
-          <div className="p-3 rounded-xl border border-cyan-500/30 bg-cyan-950/40 text-cyan-300 text-xs">
+          <div className="p-3.5 rounded-xl border border-[#4169E1]/30 bg-[#123A8C]/20 text-blue-200 text-xs backdrop-blur-sm">
             {resendStatus}
           </div>
         )}
 
         {verified ? (
-          <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-950/40 text-emerald-300 text-xs flex items-center justify-center gap-2 font-medium">
+          <div className="p-4 rounded-xl border border-emerald-800/60 bg-emerald-950/40 text-emerald-300 text-xs flex items-center justify-center gap-2 font-medium backdrop-blur-sm">
             <CheckCircle2 className="h-4 w-4" />
-
             <span>
               Email verified! Redirecting to onboarding...
             </span>
           </div>
         ) : (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-4">
+          <div className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-6 sm:p-7 space-y-4 backdrop-blur-md shadow-2xl">
             <button
               onClick={handleConfirmVerification}
               disabled={loading}
-              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-xs font-semibold shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] text-white text-xs font-semibold shadow-md shadow-[#4169E1]/20 hover:from-[#5278ef] hover:to-[#1746a2] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span>
                 {loading
@@ -159,20 +153,17 @@ export function VerifyEmailPage({
             <button
               onClick={handleResend}
               type="button"
-              className="w-full py-2 px-4 rounded-xl border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200 text-xs transition-colors flex items-center justify-center gap-1.5"
+              className="w-full py-2.5 px-4 rounded-xl border border-[#2F3338] bg-[#0B0F14] text-slate-300 hover:text-white hover:border-slate-500 text-xs transition-colors flex items-center justify-center gap-1.5"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
-
-              <span>
-                Resend Verification Email
-              </span>
+              <RefreshCw className="h-3.5 w-3.5 text-[#4169E1]" />
+              <span>Resend Verification Email</span>
             </button>
           </div>
         )}
 
         <button
           onClick={() => navigate('/login')}
-          className="text-xs text-slate-400 hover:text-cyan-400"
+          className="text-xs text-slate-400 hover:text-[#4169E1] transition-colors"
         >
           Back to Sign In
         </button>

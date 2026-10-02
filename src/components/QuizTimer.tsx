@@ -34,12 +34,12 @@ export function QuizTimer({ durationMinutes, onTimeExpired }: QuizTimerProps) {
   const isUrgent = timeLeftSeconds <= 60; // Less than 1 minute remaining
 
   return (
-    <div className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-colors ${
+    <div className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-colors shadow-xs ${
       isUrgent 
-        ? 'bg-rose-50 border-rose-200 text-rose-700 animate-pulse' 
-        : 'bg-blue-50 border-blue-200 text-blue-700'
+        ? 'bg-rose-950/50 border-rose-800/60 text-rose-300 animate-pulse' 
+        : 'bg-[#123A8C]/25 border-[#4169E1]/40 text-blue-200'
     }`}>
-      <Clock className="h-4 w-4 shrink-0" />
+      <Clock className="h-4 w-4 shrink-0 text-[#4169E1]" />
       <span>
         Time Remaining: {String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}
       </span>

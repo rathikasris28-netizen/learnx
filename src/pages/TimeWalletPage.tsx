@@ -243,9 +243,9 @@ export function TimeWalletPage({
       </div>
 
       {/* Non-Monetary Principle */}
-      <div className="p-4 rounded-2xl border border-cyan-500/20 bg-cyan-950/20 text-xs text-cyan-300 space-y-1">
+      <div className="p-4 rounded-2xl border border-blue-500/30 bg-blue-950/20 text-xs text-blue-300 space-y-1">
         <div className="flex items-center gap-2 font-bold text-white">
-          <ShieldCheck className="h-4 w-4 text-cyan-400" />
+          <ShieldCheck className="h-4 w-4 text-blue-400" />
 
           <span>
             Core Rule: 1 Hour Verified Sharing = 1
@@ -391,7 +391,7 @@ export function TimeWalletPage({
 
             <button
               onClick={() => navigate('/discover')}
-              className="mt-2 px-4 py-2 rounded-xl bg-cyan-500 text-white text-xs font-semibold hover:bg-cyan-400"
+              className="mt-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500"
             >
               Start Learning
             </button>
@@ -503,7 +503,7 @@ export function TimeWalletPage({
 
         <div className="space-y-2 text-[11px] text-slate-400 leading-relaxed">
           <p>
-            <span className="text-cyan-300 font-semibold">
+            <span className="text-blue-300 font-semibold">
               Learner:
             </span>{' '}
             receives 5 Time Credits as a one-time

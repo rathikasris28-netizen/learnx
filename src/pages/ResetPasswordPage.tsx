@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import {
   Lock,
@@ -102,12 +101,6 @@ export function ResetPasswordPage({
         throw updateError;
       }
 
-      /*
-       * End the password-recovery session after the
-       * password has been successfully changed.
-       * The user can then sign in normally with the
-       * new password.
-       */
       await supabase.auth.signOut();
 
       setSuccess(true);
@@ -123,25 +116,24 @@ export function ResetPasswordPage({
 
   if (success) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center shadow-xl">
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10">
+      <div className="min-h-screen bg-[#0B0F14] flex items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-8 text-center shadow-2xl backdrop-blur-md">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-950/40 border border-emerald-800/60">
             <CheckCircle2 className="h-9 w-9 text-emerald-400" />
           </div>
 
-          <h1 className="text-2xl font-bold text-white">
+          <h1 className="text-2xl font-bold text-white font-['Space_Grotesk']">
             Password Updated
           </h1>
 
-          <p className="mt-3 text-sm text-slate-400">
-            Your LearnX password has been successfully
-            changed.
+          <p className="mt-3 text-xs sm:text-sm text-slate-300">
+            Your LearnX password has been successfully changed.
           </p>
 
           <button
             type="button"
             onClick={() => navigate('/login')}
-            className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-500"
+            className="mt-6 w-full rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] px-4 py-3 text-xs font-semibold text-white shadow-md shadow-[#4169E1]/20 hover:from-[#5278ef] hover:to-[#1746a2] transition-all"
           >
             Continue to Login
           </button>
@@ -151,45 +143,44 @@ export function ResetPasswordPage({
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-[#0B0F14] flex items-center justify-center px-4">
       <div className="w-full max-w-md">
         <button
           type="button"
           onClick={() => navigate('/login')}
-          className="mb-6 flex items-center gap-2 text-sm text-slate-400 transition hover:text-white"
+          className="mb-6 flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-white transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Login
         </button>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-xl">
+        <div className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-6 sm:p-8 shadow-2xl backdrop-blur-md">
           <div className="mb-6 text-center">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-blue-500/10">
-              <Lock className="h-7 w-7 text-blue-400" />
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#123A8C]/25 border border-[#4169E1]/30">
+              <Lock className="h-7 w-7 text-[#4169E1]" />
             </div>
 
-            <h1 className="text-2xl font-bold text-white">
+            <h1 className="text-2xl font-bold text-white font-['Space_Grotesk']">
               Reset Your Password
             </h1>
 
-            <p className="mt-2 text-sm text-slate-400">
-              Create a new password for your LearnX
-              account.
+            <p className="mt-2 text-xs sm:text-sm text-slate-400">
+              Create a new password for your LearnX account.
             </p>
           </div>
 
           {error && (
-            <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+            <div className="mb-5 rounded-xl border border-rose-800/60 bg-rose-950/40 px-4 py-3 text-xs text-rose-300 backdrop-blur-sm">
               {error}
             </div>
           )}
 
           <form
             onSubmit={handleSubmit}
-            className="space-y-5"
+            className="space-y-4.5"
           >
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-300">
+              <label className="mb-1.5 block text-xs font-semibold text-slate-300">
                 New Password
               </label>
 
@@ -208,7 +199,7 @@ export function ResetPasswordPage({
                   autoComplete="new-password"
                   required
                   disabled={loading}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 pr-12 text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500 disabled:opacity-50"
+                  className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-4 py-2.5 pr-12 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all disabled:opacity-50"
                 />
 
                 <button
@@ -218,7 +209,7 @@ export function ResetPasswordPage({
                       !showPassword
                     )
                   }
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
                   aria-label={
                     showPassword
                       ? 'Hide password'
@@ -226,16 +217,16 @@ export function ResetPasswordPage({
                   }
                 >
                   {showPassword ? (
-                    <EyeOff className="h-5 w-5" />
+                    <EyeOff className="h-4 w-4" />
                   ) : (
-                    <Eye className="h-5 w-5" />
+                    <Eye className="h-4 w-4" />
                   )}
                 </button>
               </div>
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-300">
+              <label className="mb-1.5 block text-xs font-semibold text-slate-300">
                 Confirm Password
               </label>
 
@@ -256,7 +247,7 @@ export function ResetPasswordPage({
                   autoComplete="new-password"
                   required
                   disabled={loading}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 pr-12 text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500 disabled:opacity-50"
+                  className="w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-4 py-2.5 pr-12 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all disabled:opacity-50"
                 />
 
                 <button
@@ -266,7 +257,7 @@ export function ResetPasswordPage({
                       !showConfirmPassword
                     )
                   }
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
                   aria-label={
                     showConfirmPassword
                       ? 'Hide password'
@@ -274,24 +265,22 @@ export function ResetPasswordPage({
                   }
                 >
                   {showConfirmPassword ? (
-                    <EyeOff className="h-5 w-5" />
+                    <EyeOff className="h-4 w-4" />
                   ) : (
-                    <Eye className="h-5 w-5" />
+                    <Eye className="h-4 w-4" />
                   )}
                 </button>
               </div>
             </div>
 
-            <div className="rounded-xl bg-slate-800/50 px-4 py-3 text-xs text-slate-400">
-              Password must contain at least 8
-              characters, including uppercase, lowercase,
-              number, and special character.
+            <div className="rounded-xl border border-[#2F3338] bg-[#0B0F14] px-4 py-3 text-xs text-slate-400">
+              Password must contain at least 8 characters, including uppercase, lowercase, number, and special character.
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] px-4 py-3 text-xs font-semibold text-white shadow-md shadow-[#4169E1]/20 hover:from-[#5278ef] hover:to-[#1746a2] transition-all disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading
                 ? 'Updating Password...'

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -247,8 +246,7 @@ export function DiscoverPage({
       }>('/sessions/request', {
         method: 'POST',
         body: {
-          knowledge_sharer_id:
-            selectedCandidate.user_id,
+          knowledge_sharer_id: selectedCandidate.user_id,
           skill_id: selectedCandidate.skill_id,
           session_date: bookingDate,
           start_time: bookingTime,
@@ -280,29 +278,29 @@ export function DiscoverPage({
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Top Header */}
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-white font-['Space_Grotesk']">
+        <h1 className="text-2xl sm:text-3xl font-bold text-white font-['Space_Grotesk'] tracking-tight">
           Discover Skills & AI Peer Matching
         </h1>
 
         <p className="text-xs text-slate-400 mt-1">
-          Search the catalog or type in natural language
-          to find verified knowledge sharers.
+          Search the catalog or type in natural language to find verified knowledge sharers.
         </p>
       </div>
 
       {/* Natural Language AI Search Bar */}
-      <div className="rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-slate-900 via-cyan-950/20 to-slate-900 p-5 shadow-lg">
-        <div className="flex items-center gap-2 text-xs font-semibold text-cyan-300 mb-2">
-          <Sparkles className="h-4 w-4 text-cyan-400" />
-          <span>Natural Language AI Search</span>
+      <div className="rounded-2xl border border-[#2F3338] bg-[#0B0F14]/90 p-5 shadow-xl relative overflow-hidden backdrop-blur-md">
+        <div className="absolute top-0 right-0 w-96 h-48 bg-[#4169E1]/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="flex items-center gap-2 text-xs font-semibold text-[#4169E1] mb-2.5">
+          <Sparkles className="h-4 w-4 text-[#4169E1]" />
+          <span className="tracking-wide">Natural Language AI Search</span>
         </div>
 
         <form
           onSubmit={handleNlSearch}
-          className="flex flex-col sm:flex-row gap-3"
+          className="flex flex-col sm:flex-row gap-3 relative z-10"
         >
           <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+            <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
 
             <input
               type="text"
@@ -311,14 +309,14 @@ export function DiscoverPage({
                 setNlQuery(e.target.value)
               }
               placeholder="e.g. 'I want to learn Python from a beginner-friendly trainer' or 'Find an English trainer available at 6 PM'"
-              className="w-full pl-10 pr-4 py-3 text-xs rounded-xl border border-slate-700 bg-slate-950 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 shadow-inner"
+              className="w-full pl-10 pr-4 py-3 text-xs rounded-xl border border-[#2F3338] bg-[#0B0F14] text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all shadow-inner"
             />
           </div>
 
           <button
             type="submit"
             disabled={nlLoading}
-            className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+            className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] text-white font-semibold text-xs shadow-lg shadow-[#4169E1]/20 hover:from-[#5278f2] hover:to-[#1746a2] active:scale-[0.99] disabled:opacity-50 transition-all flex items-center justify-center gap-2"
           >
             <Sparkles className="h-3.5 w-3.5" />
 
@@ -334,7 +332,7 @@ export function DiscoverPage({
       {/* Category Tabs & Quick Search */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
         {/* Category Tabs */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900/60 border border-slate-800">
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#0B0F14] border border-[#2F3338]">
           {(
             ['All', 'Technical', 'Non-Technical'] as const
           ).map((cat) => (
@@ -343,8 +341,8 @@ export function DiscoverPage({
               onClick={() => setCategory(cat)}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 category === cat
-                  ? 'bg-cyan-500 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-gradient-to-r from-[#4169E1] to-[#123A8C] text-white shadow-md shadow-[#4169E1]/20'
+                  : 'text-slate-400 hover:text-white hover:bg-[#2F3338]/30'
               }`}
             >
               {cat}
@@ -363,14 +361,14 @@ export function DiscoverPage({
               setSearchQuery(e.target.value)
             }
             placeholder="Filter catalog..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-[#2F3338] bg-[#0B0F14] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
           />
         </div>
       </div>
 
       {/* Section 1: Skill Catalog Grid */}
       <div className="space-y-3">
-        <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
+        <h2 className="text-sm font-bold text-white font-['Space_Grotesk'] tracking-tight">
           Skill Catalog ({skills.length} available)
         </h2>
 
@@ -384,19 +382,18 @@ export function DiscoverPage({
                   skill.name
                 )
               }
-              className="p-3 rounded-xl border border-slate-800 bg-slate-900/40 hover:border-cyan-500/40 cursor-pointer transition-all hover:bg-slate-900/80 group"
+              className="p-3 rounded-xl border border-[#2F3338] bg-[#0B0F14]/70 hover:border-[#4169E1]/60 cursor-pointer transition-all hover:bg-[#2F3338]/20 group shadow-sm"
             >
-              <div className="text-[10px] text-slate-500 font-semibold uppercase">
+              <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
                 {skill.category}
               </div>
 
-              <div className="text-xs font-bold text-white group-hover:text-cyan-300 mt-1">
+              <div className="text-xs font-bold text-white group-hover:text-[#4169E1] transition-colors mt-1">
                 {skill.name}
               </div>
 
               <div className="text-[10px] text-slate-400 mt-1">
-                {skill.sharers_count ?? 0} active
-                sharers
+                {skill.sharers_count ?? 0} active sharers
               </div>
             </div>
           ))}
@@ -404,17 +401,16 @@ export function DiscoverPage({
       </div>
 
       {/* Section 2: AI Matched Knowledge Sharers */}
-      <div className="space-y-4 pt-4 border-t border-slate-800">
+      <div className="space-y-4 pt-4 border-t border-[#2F3338]">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-bold text-white font-['Space_Grotesk'] flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-cyan-400" />
+              <Sparkles className="h-4 w-4 text-[#4169E1]" />
               Verified Knowledge Sharers
             </h2>
 
             <p className="text-xs text-slate-400 mt-0.5">
-              Matched from real platform availability,
-              skill overlap, and reliability scores.
+              Matched from real platform availability, skill overlap, and reliability scores.
             </p>
           </div>
 
@@ -424,22 +420,20 @@ export function DiscoverPage({
         </div>
 
         {loadingCandidates ? (
-          <div className="py-12 text-center text-xs text-slate-500">
-            Querying real database and calculating AI
-            matching scores...
+          <div className="py-12 text-center text-xs text-slate-400">
+            <div className="inline-block h-6 w-6 rounded-full border-2 border-[#2F3338] border-t-[#4169E1] animate-spin mb-2" />
+            <p>Querying real database and calculating AI matching scores...</p>
           </div>
         ) : candidates.length === 0 ? (
-          <div className="py-12 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 p-6 space-y-2">
-            <User className="h-8 w-8 text-slate-600 mx-auto" />
+          <div className="py-12 text-center rounded-2xl border border-dashed border-[#2F3338] bg-[#0B0F14]/50 p-6 space-y-2">
+            <User className="h-8 w-8 text-slate-500 mx-auto" />
 
-            <p className="text-xs text-slate-400 font-medium">
-              No knowledge sharers currently match the
-              selected criteria.
+            <p className="text-xs text-slate-300 font-medium">
+              No knowledge sharers currently match the selected criteria.
             </p>
 
             <p className="text-[11px] text-slate-500">
-              Try adjusting your search query or
-              exploring other skills in the catalog.
+              Try adjusting your search query or exploring other skills in the catalog.
             </p>
           </div>
         ) : (
@@ -447,15 +441,14 @@ export function DiscoverPage({
             {candidates.map((candidate, index) => (
               <div
                 key={`${candidate.user_id}-${candidate.skill_id || ''}-${index}`}
-                className="p-5 rounded-2xl border border-slate-800 bg-slate-900/50 hover:border-slate-700 transition-all flex flex-col justify-between space-y-4 shadow-sm"
+                className="p-5 rounded-2xl border border-[#2F3338] bg-[#0B0F14]/80 hover:border-[#123A8C] transition-all flex flex-col justify-between space-y-4 shadow-md backdrop-blur-sm"
               >
                 <div className="space-y-3">
                   {/* Top user header & Match % */}
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-xs text-white uppercase">
-                        {candidate.full_name?.slice(0, 2) ||
-                          'LX'}
+                      <div className="h-10 w-10 rounded-full bg-gradient-to-br from-[#123A8C] to-[#0B0F14] border border-[#2F3338] flex items-center justify-center font-bold text-xs text-white uppercase shadow-sm">
+                        {candidate.full_name?.slice(0, 2) || 'LX'}
                       </div>
 
                       <div>
@@ -464,18 +457,15 @@ export function DiscoverPage({
                         </h3>
 
                         <p className="text-[10px] text-slate-400">
-                          {candidate.city
-                            ? `${candidate.city}, `
-                            : ''}
+                          {candidate.city ? `${candidate.city}, ` : ''}
                           {candidate.preferred_language}
                         </p>
                       </div>
                     </div>
 
                     <div className="flex flex-col items-end">
-                      <span className="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/60 text-cyan-300 font-bold text-xs">
-                        {candidate.match_percentage}%
-                        Match
+                      <span className="px-2.5 py-0.5 rounded-lg bg-[#123A8C]/30 border border-[#4169E1]/40 text-[#4169E1] font-bold text-xs">
+                        {candidate.match_percentage}% Match
                       </span>
 
                       <span className="text-[9px] text-slate-400 mt-0.5">
@@ -486,52 +476,42 @@ export function DiscoverPage({
 
                   {/* Skill Badge & Availability */}
                   <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-white font-semibold text-[11px]">
-                      {candidate.skill_name} ·{' '}
-                      {candidate.skill_level}
+                    <span className="px-2.5 py-1 rounded-lg bg-[#2F3338]/60 text-white font-semibold text-[11px] border border-[#2F3338]">
+                      {candidate.skill_name} · {candidate.skill_level}
                     </span>
 
                     <span
                       className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                        candidate.availability_status ===
-                        'ACTIVE'
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/40'
-                          : 'bg-slate-800 text-slate-400'
+                        candidate.availability_status === 'ACTIVE'
+                          ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800/40'
+                          : 'bg-[#2F3338]/40 text-slate-400 border border-[#2F3338]'
                       }`}
                     >
                       {candidate.availability_status}{' '}
                       (
-                      {candidate.available_from?.slice(
-                        0,
-                        5
-                      )}{' '}
+                      {candidate.available_from?.slice(0, 5)}{' '}
                       -{' '}
-                      {candidate.available_until?.slice(
-                        0,
-                        5
-                      )}
+                      {candidate.available_until?.slice(0, 5)}
                       )
                     </span>
                   </div>
 
                   {/* Why Recommended Explanation */}
-                  <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+                  <p className="text-xs text-slate-300 leading-relaxed bg-[#0B0F14] p-3 rounded-xl border border-[#2F3338]">
                     {candidate.why_recommended}
                   </p>
                 </div>
 
                 {/* Bottom Action */}
-                <div className="pt-2 flex items-center justify-between border-t border-slate-800/80 text-xs">
+                <div className="pt-2 flex items-center justify-between border-t border-[#2F3338] text-xs">
                   <div className="flex items-center gap-1 text-amber-400 font-semibold text-[11px]">
                     <Star className="h-3 w-3 fill-current" />
 
                     <span>
-                      {Number(
-                        candidate.rating_avg
-                      ).toFixed(1)}
+                      {Number(candidate.rating_avg).toFixed(1)}
                     </span>
 
-                    <span className="text-slate-500 font-normal">
+                    <span className="text-slate-400 font-normal">
                       ({candidate.rating_count} reviews)
                     </span>
                   </div>
@@ -540,7 +520,7 @@ export function DiscoverPage({
                     onClick={() =>
                       openBookingModal(candidate)
                     }
-                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-sm hover:from-cyan-400 hover:to-blue-500 transition-all flex items-center gap-1.5"
+                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] text-white font-semibold text-xs shadow-sm hover:from-[#5278f2] hover:to-[#1746a2] transition-all flex items-center gap-1.5"
                   >
                     <span>Request Session</span>
                     <ArrowRight className="h-3 w-3" />
@@ -554,18 +534,16 @@ export function DiscoverPage({
 
       {/* Booking Modal */}
       {bookingModalOpen && selectedCandidate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-[#0f172a] p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-[#2F3338] bg-[#0B0F14] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-[#2F3338] pb-3">
               <div>
                 <h3 className="text-sm font-bold text-white font-['Space_Grotesk']">
-                  Schedule Session with{' '}
-                  {selectedCandidate.full_name}
+                  Schedule Session with {selectedCandidate.full_name}
                 </h3>
 
                 <p className="text-[11px] text-slate-400">
-                  Topic: {selectedCandidate.skill_name}{' '}
-                  ({selectedCandidate.skill_level})
+                  Topic: {selectedCandidate.skill_name} ({selectedCandidate.skill_level})
                 </p>
               </div>
 
@@ -573,14 +551,14 @@ export function DiscoverPage({
                 onClick={() =>
                   setBookingModalOpen(false)
                 }
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-[#2F3338] transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             {bookingError && (
-              <div className="flex items-center gap-2 p-3 rounded-xl border border-rose-500/30 bg-rose-950/40 text-rose-300 text-xs">
+              <div className="flex items-center gap-2 p-3 rounded-xl border border-rose-500/40 bg-rose-950/40 text-rose-300 text-xs">
                 <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
                 <span>{bookingError}</span>
               </div>
@@ -621,18 +599,14 @@ export function DiscoverPage({
                           .toISOString()
                           .split('T')[0]
                       }
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 focus:outline-none focus:border-cyan-500"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-[#2F3338] bg-[#0B0F14] text-slate-200 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                       Start Time (Sharer Active from{' '}
-                      {selectedCandidate.available_from?.slice(
-                        0,
-                        5
-                      )}
-                      ) *
+                      {selectedCandidate.available_from?.slice(0, 5)}) *
                     </label>
 
                     <input
@@ -644,15 +618,14 @@ export function DiscoverPage({
                         )
                       }
                       required
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 focus:outline-none focus:border-cyan-500"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-[#2F3338] bg-[#0B0F14] text-slate-200 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
                     />
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    What is your specific learning goal
-                    for this session? *
+                    What is your specific learning goal for this session? *
                   </label>
 
                   <textarea
@@ -663,24 +636,21 @@ export function DiscoverPage({
                     }
                     required
                     placeholder="e.g. Master loops and list comprehensions with practical exercises..."
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-800 bg-slate-950 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-[#2F3338] bg-[#0B0F14] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
                   />
                 </div>
 
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-400 space-y-1">
-                  <div className="flex items-center gap-1.5 text-cyan-300 font-semibold">
+                <div className="p-3 rounded-xl bg-[#0B0F14] border border-[#2F3338] text-[11px] text-slate-400 space-y-1">
+                  <div className="flex items-center gap-1.5 text-[#4169E1] font-semibold">
                     <Clock className="h-3.5 w-3.5" />
 
                     <span>
-                      LearnX private video room · verified
-                      session time
+                      LearnX private video room · verified session time
                     </span>
                   </div>
 
                   <p>
-                    Both participants confirm completion.
-                    Any Time Credits are calculated from
-                    verified sharing time.
+                    Both participants confirm completion. Any Time Credits are calculated from verified sharing time.
                   </p>
                 </div>
 
@@ -690,7 +660,7 @@ export function DiscoverPage({
                     onClick={() =>
                       setBookingModalOpen(false)
                     }
-                    className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+                    className="px-4 py-2 text-xs text-slate-400 hover:text-white transition-colors"
                   >
                     Cancel
                   </button>
@@ -698,7 +668,7 @@ export function DiscoverPage({
                   <button
                     type="submit"
                     disabled={bookingLoading}
-                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 transition-all"
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#4169E1] to-[#123A8C] text-white font-semibold text-xs shadow-md shadow-[#4169E1]/20 hover:from-[#5278f2] hover:to-[#1746a2] disabled:opacity-50 transition-all"
                   >
                     {bookingLoading
                       ? 'Submitting...'
