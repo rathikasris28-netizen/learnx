@@ -1010,40 +1010,12 @@ apiRouter.post(
      */
 
     if (error) {
-      const errorMessage =
-        String(
-          error.message ?? ''
-        );
-
-      if (
-        /email not confirmed|email.*confirm/i.test(
-          errorMessage
-        )
-      ) {
-        return res
-          .status(403)
-          .json({
-            error:
-              'Please verify your email before logging in.',
-
-            requires_email_verification:
-              true,
-
-            email:
-              String(email)
-                .trim()
-                .toLowerCase(),
-          });
-      }
-
-      return bad(
-        res,
-        errorMessage ||
-          'Login failed',
-        401
-      );
-    }
-
+  return bad(
+    res,
+    String(error.message ?? 'Login failed'),
+    401
+  );
+}
     /*
      * Supabase should return a session
      * for a successful login.

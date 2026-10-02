@@ -38,7 +38,7 @@ export function LoginPage({
     } catch (err: any) {
       setError(
         err?.message ||
-          'Failed to sign in. Please verify your email and password.'
+          'Failed to sign in. Please check your email and password.'
       );
     } finally {
       setLoading(false);
@@ -151,7 +151,7 @@ export function LoginPage({
             role="status"
             className="rounded-xl border border-emerald-800/60 bg-emerald-950/40 p-3.5 text-xs text-emerald-300 backdrop-blur-sm"
           >
-            Your LearnX account was created. Please check your email, verify your account, and then sign in to continue.
+           Your LearnX account was created successfully. Please sign in to continue.
           </div>
         )}
 

@@ -98,7 +98,6 @@ function AppContent() {
     '/register',
     '/register/learner',
     '/register/mentor',
-    '/verify-email',
     '/forgot-password',
     '/reset-password',
     '/terms',
@@ -423,7 +422,6 @@ function AppContent() {
     currentPath !== '/register' &&
     currentPath !== '/register/learner' &&
     currentPath !== '/register/mentor' &&
-    currentPath !== '/verify-email' &&
     currentPath !== '/forgot-password' &&
     currentPath !== '/reset-password';
 
