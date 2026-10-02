@@ -125,6 +125,7 @@ export function OnboardingPage({
 
   const [bio, setBio] = useState('');
   const [learningGoal, setLearningGoal] = useState('');
+  const [customLearningGoal, setCustomLearningGoal] = useState('');
   const [targetSkillLevel, setTargetSkillLevel] =
     useState<SkillLevel>('BEGINNER');
   const [learningSchedule, setLearningSchedule] = useState('');
@@ -385,6 +386,10 @@ export function OnboardingPage({
     }
 
     if (!learningGoal.trim()) {
+      return 'Please select your learning goal.';
+    }
+
+    if (learningGoal === 'Other' && !customLearningGoal.trim()) {
       return 'Please enter your learning goal.';
     }
 
@@ -474,7 +479,10 @@ export function OnboardingPage({
           share_skills: shareSkills,
           availability,
           bio: bio.trim(),
-          learning_goal: learningGoal.trim(),
+          learning_goal:
+            learningGoal === 'Other'
+              ? customLearningGoal.trim()
+              : learningGoal.trim(),
           target_skill_level: targetSkillLevel,
           learning_schedule: learningSchedule.trim(),
           learning_interests: learningInterests.trim(),
@@ -529,15 +537,9 @@ export function OnboardingPage({
               : selectedShareSkillIds.has(skill.id);
 
           return (
-            <button
+            <label
               key={skill.id}
-              type="button"
-              onClick={() =>
-                type === 'learn'
-                  ? toggleLearnSkill(skill)
-                  : toggleShareSkill(skill)
-              }
-              className={`rounded-xl border p-4 text-left transition-all ${
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 text-left transition-all ${
                 selected
                   ? type === 'learn'
                     ? 'border-[#4169E1] bg-[#123A8C]/25 text-white shadow-xs'
@@ -545,36 +547,53 @@ export function OnboardingPage({
                   : 'border-[#2F3338] bg-[#121720]/70 hover:border-slate-500 hover:bg-[#121720]'
               }`}
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-white">
-                    {skill.name}
-                  </p>
+              <input
+                type="checkbox"
+                checked={selected}
+                onChange={() =>
+                  type === 'learn'
+                    ? toggleLearnSkill(skill)
+                    : toggleShareSkill(skill)
+                }
+                className={`mt-0.5 h-4 w-4 shrink-0 rounded border-slate-600 bg-[#0B0F14] ${
+                  type === 'learn'
+                    ? 'accent-[#4169E1]'
+                    : 'accent-emerald-500'
+                }`}
+              />
 
-                  {skill.category && (
-                    <p className="mt-1 text-[10px] text-slate-400 uppercase tracking-wider">
-                      {skill.category}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">
+                      {skill.name}
                     </p>
+
+                    {skill.category && (
+                      <p className="mt-1 text-[10px] text-slate-400 uppercase tracking-wider">
+                        {skill.category}
+                      </p>
+                    )}
+                  </div>
+
+                  {selected && (
+                    <CheckCircle2
+                      className={`h-5 w-5 shrink-0 ${
+                        type === 'learn'
+                          ? 'text-[#4169E1]'
+                          : 'text-emerald-400'
+                      }`}
+                    />
                   )}
                 </div>
 
-                {selected && (
-                  <CheckCircle2
-                    className={`h-5 w-5 shrink-0 ${
-                      type === 'learn'
-                        ? 'text-[#4169E1]'
-                        : 'text-emerald-400'
-                    }`}
-                  />
+                {skill.description && (
+                  <p className="mt-2 line-clamp-2 text-xs text-slate-400 leading-relaxed">
+                    {skill.description}
+                  </p>
                 )}
               </div>
-
-              {skill.description && (
-                <p className="mt-2 line-clamp-2 text-xs text-slate-400 leading-relaxed">
-                  {skill.description}
-                </p>
-              )}
-            </button>
+            </label>
           );
         })}
       </div>
@@ -952,80 +971,6 @@ export function OnboardingPage({
         </select>
       </section>
 
-      <section className="rounded-2xl border border-[#2F3338] bg-[#121720]/80 p-5 sm:p-6 shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#123A8C]/25 border border-[#4169E1]/30 text-[#4169E1]">
-            <BookOpen className="h-5 w-5" />
-          </div>
-
-          <div>
-            <h2 className="text-sm font-bold text-white font-['Space_Grotesk']">
-              Learning Goal
-            </h2>
-
-            <p className="text-xs text-slate-400">
-              This helps LearnX understand what you want to achieve.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4 space-y-4">
-          <label className="block text-xs font-semibold text-slate-300">
-            Learning Goal
-            <textarea
-              value={learningGoal}
-              onChange={(event) => setLearningGoal(event.target.value)}
-              rows={3}
-              placeholder="Example: I want to learn Python for data analysis."
-              className="mt-1.5 w-full resize-none rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
-            />
-          </label>
-
-          <label className="block text-xs font-semibold text-slate-300">
-            Target Skill Level
-            <select
-              value={targetSkillLevel}
-              onChange={(event) =>
-                setTargetSkillLevel(
-                  event.target.value as SkillLevel
-                )
-              }
-              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
-            >
-              {SKILL_LEVELS.map((level) => (
-                <option key={level.value} value={level.value} className="bg-[#0B0F14] text-white">
-                  {level.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block text-xs font-semibold text-slate-300">
-            Preferred Learning Schedule
-            <input
-              value={learningSchedule}
-              onChange={(event) =>
-                setLearningSchedule(event.target.value)
-              }
-              placeholder="Example: Weekdays 6 PM - 8 PM"
-              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
-            />
-          </label>
-
-          <label className="block text-xs font-semibold text-slate-300">
-            Learning Interests
-            <input
-              value={learningInterests}
-              onChange={(event) =>
-                setLearningInterests(event.target.value)
-              }
-              placeholder="Example: AI, Web Development, Data Science"
-              className="mt-1.5 w-full rounded-xl border border-[#2F3338] bg-[#0B0F14] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
-            />
-          </label>
-        </div>
-      </section>
-
       {isMentor && (
         <section className="rounded-2xl border border-emerald-800/60 bg-[#121720]/80 p-5 sm:p-6 shadow-md">
           <div className="flex items-center gap-3">
@@ -1279,6 +1224,68 @@ export function OnboardingPage({
                 : learnSkills.length}
             </strong>
           </div>
+
+          {!isMentor && (
+            <div className="rounded-xl border border-[#2F3338] bg-[#0B0F14] p-4">
+              <label className="block text-xs font-semibold text-slate-300">
+                Learning Goal *
+              </label>
+
+              <p className="mt-1 text-[11px] text-slate-500">
+                What do you want to achieve by learning these skills?
+              </p>
+
+              <select
+                value={learningGoal}
+                onChange={(event) => {
+                  setLearningGoal(event.target.value);
+
+                  if (event.target.value !== 'Other') {
+                    setCustomLearningGoal('');
+                  }
+                }}
+                className="mt-3 w-full rounded-xl border border-[#2F3338] bg-[#121720] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
+              >
+                <option value="">Select your learning goal</option>
+                <option value="Career / Job Preparation">
+                  Career / Job Preparation
+                </option>
+                <option value="Interview Preparation">
+                  Interview Preparation
+                </option>
+                <option value="College / Exam Preparation">
+                  College / Exam Preparation
+                </option>
+                <option value="Project Development">
+                  Project Development
+                </option>
+                <option value="Improve Current Skills">
+                  Improve Current Skills
+                </option>
+                <option value="Career Growth">
+                  Career Growth
+                </option>
+                <option value="Personal Interest">
+                  Personal Interest
+                </option>
+                <option value="Other">
+                  Other
+                </option>
+              </select>
+
+              {learningGoal === 'Other' && (
+                <textarea
+                  rows={2}
+                  value={customLearningGoal}
+                  onChange={(event) =>
+                    setCustomLearningGoal(event.target.value)
+                  }
+                  placeholder="Enter your learning goal"
+                  className="mt-2 w-full resize-none rounded-xl border border-[#2F3338] bg-[#121720] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1] transition-all"
+                />
+              )}
+            </div>
+          )}
 
           {isMentor && shareSkills.length > 0 && (
             <div className="pt-2">
