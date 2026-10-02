@@ -205,6 +205,11 @@ async function getAppProfile(user: any) {
         metadata.onboarding_completed
       ),
 
+    onboarding_completed:
+      Boolean(
+        metadata.onboarding_completed
+      ),
+
     isActive:
       metadata.is_active !== false,
 

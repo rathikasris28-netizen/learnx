@@ -34,7 +34,7 @@ interface AuthContextType {
   logout: () => void;
 
   refreshUser: () => Promise<void>;
-
+  updateUser: (user: UserProfile) => void;
  }
 
 const AuthContext = createContext<
@@ -376,6 +376,7 @@ return (
       register,
       logout,
       refreshUser,
+      updateUser: setUser,
     }}
   >
     {children}

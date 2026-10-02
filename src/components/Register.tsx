@@ -97,7 +97,7 @@ export function OnboardingPage({
 }: {
   navigate: (path: string) => void;
 }) {
-  const { user, refreshUser } = useAuth();
+  const { user, updateUser } = useAuth();
 
   const userRole = String(user?.role ?? '').toUpperCase();
 
@@ -471,7 +471,7 @@ export function OnboardingPage({
     setLoading(true);
 
     try {
-      await apiRequest('/onboarding', {
+      const updatedUser = await apiRequest('/onboarding', {
         method: 'POST',
         body: {
           learn_skills: learnSkills,
@@ -490,10 +490,10 @@ export function OnboardingPage({
           mentor_languages: mentorLanguages,
         },
       });
-
+      updateUser(updatedUser);
 
       setCompleted(true);
-      window.location.assign('/dashboard');
+      navigate('/dashboard');
     } catch (cause: any) {
       setError(
         cause?.message ||
