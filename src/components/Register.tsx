@@ -493,8 +493,8 @@ export function OnboardingPage({
 
 
       setCompleted(true);
-      navigate('/dashboard');
-} catch (cause: any) {
+      window.location.assign('/dashboard');
+    } catch (cause: any) {
       setError(
         cause?.message ||
           'Unable to complete onboarding. Please try again.'
@@ -1412,4 +1412,7 @@ export function OnboardingPage({
     </main>
   );
 }
+
+
+
 
