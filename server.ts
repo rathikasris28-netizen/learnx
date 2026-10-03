@@ -1,43 +1,13 @@
 import 'dotenv/config';
 
 import express from 'express';
-import cors from 'cors';
 import path from 'node:path';
 
 import { initDatabase } from './server/db.ts';
-import { apiRouter } from './server/routes.ts';
-const app = express();
+import app from './server/app.ts';
+
 const PORT = Number(process.env.PORT) || 3000;
-
 const isProduction = process.env.NODE_ENV === 'production';
-
-/**
- * CORS configuration
- *
- * Allows the frontend to communicate with the LearnX backend.
- *
- * For production, set FRONTEND_URL in the backend environment:
- *
- * FRONTEND_URL=https://your-frontend-domain.com
- */
-const frontendUrl = process.env.FRONTEND_URL;
-
-app.use(
-  cors({
-    origin: frontendUrl || true,
-    credentials: true,
-  }),
-);
-
-/**
- * Parse JSON request bodies.
- */
-app.use(express.json());
-
-/**
- * LearnX REST API.
- */
-app.use('/api', apiRouter);
 
 /**
  * Start the application.
@@ -116,9 +86,4 @@ async function startServer(): Promise<void> {
   }
 }
 
-/**
- * Graceful shutdown.
- *
- * Prisma shutdown handling is already registered in db.ts.
- */
 startServer();
