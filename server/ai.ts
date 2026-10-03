@@ -255,6 +255,48 @@ export interface ComputeMatchesParams {
 export async function computeMatches(
   params: ComputeMatchesParams,
 ): Promise<MatchCandidate[]> {
+  // 1. Get the learner's real LEARN skills
+  const learnerSkills = await db.userSkill.findMany({
+    where: {
+      userId: params.learner_id,
+      skillType: "LEARN",
+    },
+    select: {
+      skillId: true,
+      skillLevel: true,
+      skill: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  });
+
+  // Map learner skill ID -> learner level
+  const learnerSkillLevels = new Map<string, string>();
+
+  for (const learnerSkill of learnerSkills) {
+    learnerSkillLevels.set(
+      learnerSkill.skillId,
+      String(learnerSkill.skillLevel ?? "BEGINNER"),
+    );
+  }
+
+  // 2. Determine skills to match
+  let learnerSkillIds: string[] = [];
+
+  if (!params.skill_id && !params.skill_name) {
+    learnerSkillIds = learnerSkills.map(
+      (skill) => skill.skillId,
+    );
+
+    // No learner skills = nothing to match
+    if (learnerSkillIds.length === 0) {
+      return [];
+    }
+  }
+
+  // 3. Find REAL knowledge sharers
   const rows = await db.$queryRaw<
     Array<{
       user_id: string;
@@ -288,18 +330,22 @@ export async function computeMatches(
         'LearnX User'
       ) AS full_name,
 
-      u.raw_user_meta_data ->> 'profile_photo_url' AS profile_photo,
+      u.raw_user_meta_data ->> 'profile_photo_url'
+        AS profile_photo,
 
-      u.raw_user_meta_data ->> 'city' AS city,
+      u.raw_user_meta_data ->> 'city'
+        AS city,
 
-      u.raw_user_meta_data ->> 'state' AS state,
+      u.raw_user_meta_data ->> 'state'
+        AS state,
 
       COALESCE(
         u.raw_user_meta_data ->> 'preferred_language',
         'English'
       ) AS preferred_language,
 
-      u.raw_user_meta_data ->> 'bio' AS bio,
+      u.raw_user_meta_data ->> 'bio'
+        AS bio,
 
       s.id AS skill_id,
 
@@ -365,13 +411,30 @@ export async function computeMatches(
 
       ${
         params.skill_id
-          ? Prisma.sql`AND s.id = ${params.skill_id}`
+          ? Prisma.sql`
+              AND s.id = ${params.skill_id}
+            `
           : Prisma.empty
       }
 
       ${
         params.skill_name
-          ? Prisma.sql`AND LOWER(s.name) = LOWER(${params.skill_name})`
+          ? Prisma.sql`
+              AND LOWER(s.name) =
+                  LOWER(${params.skill_name})
+            `
+          : Prisma.empty
+      }
+
+      ${
+        !params.skill_id &&
+        !params.skill_name &&
+        learnerSkillIds.length > 0
+          ? Prisma.sql`
+              AND s.id IN (
+                ${Prisma.join(learnerSkillIds)}
+              )
+            `
           : Prisma.empty
       }
 
@@ -392,6 +455,7 @@ export async function computeMatches(
       full_name ASC
   `;
 
+  // 4. Calculate match scores
   const candidates: MatchCandidate[] = [];
 
   for (const row of rows) {
@@ -411,16 +475,6 @@ export async function computeMatches(
       row.reliability_score ?? 90,
     );
 
-    /**
-     * The current database does not have separate trust_score
-     * or verification_level columns in user_reliability.
-     *
-     * Keep these response fields for frontend compatibility.
-     *
-     * Trust score is derived from reliability.
-     * Verification level remains a safe descriptive default
-     * until a dedicated verification field is available.
-     */
     const trustScore = Math.min(
       100,
       Math.max(
@@ -444,22 +498,32 @@ export async function computeMatches(
       row.skill_level ?? "BEGINNER",
     );
 
+    const learnerLevel =
+      learnerSkillLevels.get(row.skill_id);
+
     let score = 70;
 
-    /**
-     * Availability score.
-     */
+    // Exact skill match
+    if (
+      !params.skill_id &&
+      !params.skill_name &&
+      learnerSkillIds.includes(row.skill_id)
+    ) {
+      score += 10;
+    }
+
+    // Availability
     if (availabilityStatus === "ACTIVE") {
       score += 12;
-    } else if (availabilityStatus === "IN_CLASS") {
+    } else if (
+      availabilityStatus === "IN_CLASS"
+    ) {
       score -= 5;
     } else {
       score -= 10;
     }
 
-    /**
-     * Requested time score.
-     */
+    // Requested time
     if (
       params.time &&
       params.time >= availableFrom &&
@@ -468,13 +532,7 @@ export async function computeMatches(
       score += 8;
     }
 
-    /**
-     * Preferred language score.
-     *
-     * The current user_skills table does not contain
-     * a languages column, so matching uses the user's
-     * preferred language from Supabase Auth metadata.
-     */
+    // Language
     if (params.language) {
       const profileLanguage =
         row.preferred_language ?? "";
@@ -490,11 +548,13 @@ export async function computeMatches(
       }
     }
 
-    /**
-     * Skill level score.
-     */
+    // Skill level compatibility
     if (params.level) {
       if (
+        params.level === skillLevel
+      ) {
+        score += 5;
+      } else if (
         params.level === "BEGINNER" &&
         (
           skillLevel === "INTERMEDIATE" ||
@@ -502,16 +562,29 @@ export async function computeMatches(
         )
       ) {
         score += 4;
-      } else if (
-        params.level === skillLevel
+      }
+    } else if (learnerLevel) {
+      if (
+        learnerLevel === skillLevel
       ) {
-        score += 3;
+        score += 8;
+      } else if (
+        learnerLevel === "BEGINNER" &&
+        (
+          skillLevel === "INTERMEDIATE" ||
+          skillLevel === "ADVANCED"
+        )
+      ) {
+        score += 5;
+      } else if (
+        learnerLevel === "INTERMEDIATE" &&
+        skillLevel === "ADVANCED"
+      ) {
+        score += 4;
       }
     }
 
-    /**
-     * Reliability / trust bonus.
-     */
+    // Trust / reliability
     const trustBonus = Math.min(
       5,
       Math.max(
@@ -522,9 +595,7 @@ export async function computeMatches(
 
     score += trustBonus;
 
-    /**
-     * Rating bonus.
-     */
+    // Rating
     if (ratingAvg >= 4.5) {
       score += 2;
     }
@@ -541,7 +612,15 @@ export async function computeMatches(
       `Shares ${row.skill_name} (${skillLevel})`,
     ];
 
-    if (availabilityStatus === "ACTIVE") {
+    if (learnerLevel) {
+      reasons.push(
+        `Learner level: ${learnerLevel}`,
+      );
+    }
+
+    if (
+      availabilityStatus === "ACTIVE"
+    ) {
       reasons.push(
         `Currently Active (${availableFrom.slice(0, 5)} - ${availableUntil.slice(0, 5)})`,
       );
@@ -626,6 +705,7 @@ export async function computeMatches(
     });
   }
 
+  // Highest match first
   candidates.sort(
     (a, b) =>
       b.match_percentage -
