@@ -1,17 +1,18 @@
 
 const configuredApiBase =
   import.meta.env.VITE_API_BASE_URL ||
-  (import.meta.env.DEV
-    ? '/api'
-    : 'https://learnx-backend-heqj.onrender.com/api');
+  '/api';
 
-const normalizedApiBase = configuredApiBase.replace(/\/+$/, '');
+const normalizedApiBase =
+  configuredApiBase.replace(/\/+$/, '');
 
-const API_BASE = normalizedApiBase.endsWith('/api')
-  ? normalizedApiBase
-  : `${normalizedApiBase}/api`;
+const API_BASE =
+  normalizedApiBase.endsWith('/api')
+    ? normalizedApiBase
+    : `${normalizedApiBase}/api`;
 
-interface ApiOptions extends Omit<RequestInit, 'body'> {
+interface ApiOptions
+  extends Omit<RequestInit, 'body'> {
   body?: any;
 }
 
@@ -19,7 +20,8 @@ export async function apiRequest<T = any>(
   endpoint: string,
   options: ApiOptions = {},
 ): Promise<T> {
-  const token = localStorage.getItem('learnx_token');
+  const token =
+    localStorage.getItem('learnx_token');
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -27,7 +29,8 @@ export async function apiRequest<T = any>(
   };
 
   if (token) {
-    headers.Authorization = `Bearer ${token}`;
+    headers.Authorization =
+      `Bearer ${token}`;
   }
 
   const body =
@@ -38,11 +41,13 @@ export async function apiRequest<T = any>(
       ? JSON.stringify(options.body)
       : options.body;
 
-  const normalizedEndpoint = endpoint.startsWith('/')
-    ? endpoint
-    : `/${endpoint}`;
+  const normalizedEndpoint =
+    endpoint.startsWith('/')
+      ? endpoint
+      : `/${endpoint}`;
 
-  const url = `${API_BASE}${normalizedEndpoint}`;
+  const url =
+    `${API_BASE}${normalizedEndpoint}`;
 
   const response = await fetch(url, {
     ...options,
@@ -50,7 +55,8 @@ export async function apiRequest<T = any>(
     body,
   });
 
-  const data = await response.json().catch(() => ({}));
+  const data =
+    await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(

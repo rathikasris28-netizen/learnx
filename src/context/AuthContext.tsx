@@ -35,7 +35,7 @@ interface AuthContextType {
 
   refreshUser: () => Promise<void>;
   updateUser: (user: UserProfile) => void;
- }
+}
 
 const AuthContext = createContext<
   AuthContextType | undefined
@@ -59,9 +59,6 @@ export function AuthProvider({
 
   /**
    * Refresh the currently authenticated LearnX user.
-   *
-   * The backend validates the Supabase access token
-   * through /auth/me.
    */
   const refreshUser = useCallback(async () => {
     const storedToken =
@@ -86,13 +83,8 @@ export function AuthProvider({
       setUser(data.user);
       setToken(storedToken);
     } catch {
-      localStorage.removeItem(
-        'learnx_user_id'
-      );
-
-      localStorage.removeItem(
-        'learnx_token'
-      );
+      localStorage.removeItem('learnx_user_id');
+      localStorage.removeItem('learnx_token');
 
       setUser(null);
       setToken(null);
@@ -103,12 +95,6 @@ export function AuthProvider({
 
   /**
    * Authentication initialization.
-   *
-   * If a real Supabase access token exists,
-   * validate it through the backend.
-   *
-   * Otherwise, the application starts as
-   * an unauthenticated user.
    */
   useEffect(() => {
     const storedToken =
@@ -125,11 +111,6 @@ export function AuthProvider({
 
   /**
    * Real-time synchronization.
-   *
-   * Refresh authenticated user information when
-   * LearnX session-related events are received.
-   *
-   * A polling backup is also maintained.
    */
   useEffect(() => {
     if (!user || !token) {
@@ -170,9 +151,7 @@ export function AuthProvider({
 
     const interval = setInterval(() => {
       const currentToken =
-        localStorage.getItem(
-          'learnx_token'
-        );
+        localStorage.getItem('learnx_token');
 
       if (currentToken) {
         void apiRequest(
@@ -190,14 +169,11 @@ export function AuthProvider({
   /**
    * Login.
    *
-   * Backend:
-   *   POST /auth/login
+   * The backend authenticates the user using
+   * Supabase email/password authentication.
    *
-   * Supabase:
-   *   Authenticates the user's email/password.
-   *
-   * Email verification remains controlled by
-   * the backend/Supabase authentication flow.
+   * LearnX does not block login based on
+   * email verification status.
    */
   const login = async (
     email: string,
@@ -237,9 +213,6 @@ export function AuthProvider({
       );
     }
 
-    /**
-     * Store the real Supabase access token.
-     */
     localStorage.setItem(
       'learnx_user_id',
       userId
@@ -258,18 +231,15 @@ export function AuthProvider({
   /**
    * Registration.
    *
-   * Frontend roles:
+   * Frontend:
    *   LEARNER
    *   MENTOR
    *
-   * Backend roles:
+   * Backend:
    *   LEARNER
    *   KNOWLEDGE_SHARER
-   *
-   * MENTOR is therefore converted to
-   * KNOWLEDGE_SHARER before being sent.
    */
-   const register =async (
+  const register = async (
     formData: any,
     role: 'LEARNER' | 'MENTOR'
   ) => {
@@ -279,38 +249,36 @@ export function AuthProvider({
         : 'LEARNER';
 
     const data = await apiRequest(
-  '/auth/register',
-  {
-    method: 'POST',
-    body: {
-      ...formData,
-      role: backendRole,
-    },
-  }
-);
-await login(
-  formData.email,
-  formData.password
-);
+      '/auth/register',
+      {
+        method: 'POST',
+        body: {
+          ...formData,
+          role: backendRole,
+        },
+      }
+    );
 
-if (!data?.user?.id) {
-  throw new Error(
-    'Registration succeeded without returning the created account.'
-  );
-}
+    if (!data?.user?.id) {
+      throw new Error(
+        'Registration succeeded without returning the created account.'
+      );
+    }
 
-await login(
-  formData.email,
-  formData.password
-);
+    /**
+     * Log the newly registered user in once.
+     */
+    await login(
+      formData.email,
+      formData.password
+    );
 
-    
     const registeredRole =
       data?.profile?.role ??
       backendRole;
 
     /**
-     * LearnX welcome credit rule:
+     * LearnX Time Credit rule:
      *
      * LEARNER
      *   -> +5 Time Credits
@@ -329,63 +297,51 @@ await login(
         : welcomeBonus;
 
     return {
-  user_id: data.user.id,
+      user_id: data.user.id,
 
-  email_confirmed: true,
+      email_confirmed: true,
 
-  role: registeredRole,
+      role: registeredRole,
 
-  welcome_bonus: welcomeBonus,
+      welcome_bonus: welcomeBonus,
 
-  balance,
-};
+      balance,
+    };
   };
-
-  /**
-   * Verify email.
-   *
-   * The verification token is sent to the
-   * backend, which completes the Supabase
-   * email-verification process.
-   *
-   * userId and email remain in the signature
-   * for compatibility with existing callers.
-   */
-  
 
   /**
    * Logout.
    */
   const logout = (): void => {
-  localStorage.removeItem(
-    'learnx_user_id'
+    localStorage.removeItem(
+      'learnx_user_id'
+    );
+
+    localStorage.removeItem(
+      'learnx_token'
+    );
+
+    setUser(null);
+    setToken(null);
+    setLoading(false);
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        loading,
+        login,
+        register,
+        logout,
+        refreshUser,
+        updateUser: setUser,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
   );
-
-  localStorage.removeItem(
-    'learnx_token'
-  );
-
-  setUser(null);
-  setToken(null);
-  setLoading(false);
-};
-
-return (
-  <AuthContext.Provider
-    value={{
-      user,
-      token,
-      loading,
-      login,
-      register,
-      logout,
-      refreshUser,
-      updateUser: setUser,
-    }}
-  >
-    {children}
-  </AuthContext.Provider>
-);
 }
 
 export function useAuth() {
