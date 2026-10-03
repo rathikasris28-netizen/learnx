@@ -282,3 +282,27 @@
 
 # APP\_URL=http://localhost:3000
 
+---
+
+## 4. Real Demo Accounts
+
+LearnX can provision a Mentor/Knowledge Sharer and a Learner as real Supabase
+Auth accounts with real application records in Supabase PostgreSQL. Provisioning
+runs on server startup when both demo password environment variables are set.
+
+Set `LEARNX_DEMO_MENTOR_PASSWORD` and `LEARNX_DEMO_LEARNER_PASSWORD` in Vercel
+or another approved secret manager. The default login emails are
+`rathika.sri.demo@learnx.test` and `ram.demo@learnx.test`; override them with
+`LEARNX_DEMO_MENTOR_EMAIL` and `LEARNX_DEMO_LEARNER_EMAIL` if needed.
+
+The provisioner confirms the accounts' emails, applies the configured
+passwords, and ensures real profiles, wallets, availability, reliability,
+skills, and skill-catalog entries exist. Re-running it is safe; configured
+passwords are reapplied at each server start. Never put password values in
+frontend variables, API responses, source control, or logs.
+
+Additional accounts can be provisioned alongside the defaults with
+`LEARNX_ADDITIONAL_DEMO_ACCOUNTS_JSON`, set only in a secret manager. Its value
+is a JSON array of objects with `email`, `password`, `fullName`, `role`
+(`LEARNER`, `MENTOR`, or `KNOWLEDGE_SHARER`), `learnSkills`, and `shareSkills`.
+Each skill name is added to the real catalog if it is not already present.

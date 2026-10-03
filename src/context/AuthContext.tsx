@@ -288,6 +288,10 @@ export function AuthProvider({
     },
   }
 );
+await login(
+  formData.email,
+  formData.password
+);
 
 if (!data?.user?.id) {
   throw new Error(

@@ -16,10 +16,10 @@ import { Prisma } from "@prisma/client";
  * Important:
  *   - No SQLite
  *   - No local database
- *   - No demo users
+ *   - No demo-only matching logic; demo users are real Supabase accounts
  *   - No demo sessions
  *   - No fake credits
- *   - No automatic test data
+ *   - No automatic session or course test data
  *
  * Supabase Authentication remains responsible for:
  *   - email
@@ -228,8 +228,7 @@ export interface ComputeMatchesParams {
 /**
  * Find real knowledge sharers from PostgreSQL.
  *
- * No demo users.
- * No hard-coded mentor accounts.
+ * No hard-coded mentor accounts; all profiles come from Supabase Auth.
  * No SQLite.
  *
  * IMPORTANT:

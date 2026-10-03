@@ -12,10 +12,9 @@ import { PrismaClient } from "@prisma/client";
  * Important:
  *   - No SQLite
  *   - No local learnx.db
- *   - No demo users
+ *   - No implicit demo users; optional accounts are provisioned by demoAccounts.ts
  *   - No demo sessions
- *   - No fake credits
- *   - No automatic test data
+ *   - No automatic session or course test data
  *   - Skills are system/master data and are NOT created here
  *
  * Supabase Authentication remains responsible for:

@@ -92,13 +92,17 @@ export function DiscoverPage({
       setLoadingCandidates(true);
 
       try {
-        const response = await apiRequest<{
-          matches?: MatchCandidate[];
-        }>('/matching');
+        const response = await apiRequest<
+          MatchCandidate[] | { matches?: MatchCandidate[] }
+        >('/matching');
 
         if (!cancelled) {
           setCandidates(
-            Array.isArray(response?.matches) ? response.matches : []
+            Array.isArray(response)
+              ? response
+              : Array.isArray(response?.matches)
+                ? response.matches
+                : []
           );
         }
       } catch {
@@ -152,12 +156,16 @@ export function DiscoverPage({
     setLoadingCandidates(true);
 
     try {
-      const response = await apiRequest<{
-        matches?: MatchCandidate[];
-      }>(`/matching?skill_id=${encodeURIComponent(skillId)}`);
+      const response = await apiRequest<
+        MatchCandidate[] | { matches?: MatchCandidate[] }
+      >(`/matching?skill_id=${encodeURIComponent(skillId)}`);
 
       setCandidates(
-        Array.isArray(response?.matches) ? response.matches : []
+        Array.isArray(response)
+          ? response
+          : Array.isArray(response?.matches)
+            ? response.matches
+            : []
       );
     } catch {
       setCandidates([]);

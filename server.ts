@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { initDatabase } from './server/db.ts';
 import app from './server/app.ts';
+import { provisionDemoAccounts } from './server/demoAccounts.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const isProduction = process.env.NODE_ENV === 'production';
@@ -20,9 +21,11 @@ async function startServer(): Promise<void> {
      *
      * No schema creation.
      * No migrations.
-     * No seed/demo data.
+     * Demo accounts are provisioned only when their secure credentials
+     * are configured in the server environment.
      */
     await initDatabase();
+    await provisionDemoAccounts();
 
     if (!isProduction) {
       /**

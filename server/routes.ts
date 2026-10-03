@@ -1658,7 +1658,39 @@ apiRouter.post(
         )
       );
 
-    res.json(parsed);
+    const {
+      profile,
+    } = auth(req);
+
+    const {
+      data: usersData,
+      error: usersError,
+    } =
+      await supabaseAdmin.auth.admin.listUsers({
+        page: 1,
+        perPage: 1000,
+      });
+
+    if (usersError) {
+      return res.status(500).json({
+        error: usersError.message,
+      });
+    }
+
+    const results =
+      await computeMatches({
+        learner_id: profile.id,
+        skill_name: parsed.skill_name,
+        level: parsed.level,
+        language: parsed.language,
+        time: parsed.preferred_time,
+        profiles: usersData.users,
+      });
+
+    res.json({
+      ...parsed,
+      results,
+    });
   }
 );
 
