@@ -253,13 +253,20 @@ export interface ComputeMatchesParams {
  *   session_reviews
  */
 export async function computeMatches(
-  params: ComputeMatchesParams,
+  params: ComputeMatchesParams & {
+    profiles?: Array<{
+      id: string;
+      email?: string | null;
+      user_metadata?: Record<string, any> | null;
+      email_confirmed_at?: string | null;
+    }>;
+  },
 ): Promise<MatchCandidate[]> {
-  // 1. Get the learner's real LEARN skills
   const learnerSkills = await db.userSkill.findMany({
     where: {
       userId: params.learner_id,
       skillType: "LEARN",
+      isActive: true,
     },
     select: {
       skillId: true,
@@ -272,17 +279,15 @@ export async function computeMatches(
     },
   });
 
-  // Map learner skill ID -> learner level
   const learnerSkillLevels = new Map<string, string>();
 
-  for (const learnerSkill of learnerSkills) {
+  for (const skill of learnerSkills) {
     learnerSkillLevels.set(
-      learnerSkill.skillId,
-      String(learnerSkill.skillLevel ?? "BEGINNER"),
+      skill.skillId,
+      String(skill.skillLevel ?? "BEGINNER"),
     );
   }
 
-  // 2. Determine skills to match
   let learnerSkillIds: string[] = [];
 
   if (!params.skill_id && !params.skill_name) {
@@ -290,190 +295,221 @@ export async function computeMatches(
       (skill) => skill.skillId,
     );
 
-    // No learner skills = nothing to match
     if (learnerSkillIds.length === 0) {
       return [];
     }
   }
 
-  // 3. Find REAL knowledge sharers
-  const rows = await db.$queryRaw<
-    Array<{
-      user_id: string;
-      full_name: string | null;
-      profile_photo: string | null;
-      city: string | null;
-      state: string | null;
-      preferred_language: string | null;
-      bio: string | null;
+  const shareSkills = await db.userSkill.findMany({
+    where: {
+      skillType: "SHARE",
+      isActive: true,
+      ...(params.skill_id
+        ? { skillId: params.skill_id }
+        : {}),
+      ...(params.skill_name
+        ? {
+            skill: {
+              name: {
+                equals: params.skill_name,
+                mode: "insensitive",
+              },
+            },
+          }
+        : {}),
+      ...(!params.skill_id &&
+      !params.skill_name &&
+      learnerSkillIds.length > 0
+        ? {
+            skillId: {
+              in: learnerSkillIds,
+            },
+          }
+        : {}),
+    },
+    select: {
+      userId: true,
+      skillId: true,
+      skillLevel: true,
+      skill: {
+        select: {
+          id: true,
+          name: true,
+          isActive: true,
+        },
+      },
+    },
+  });
 
-      skill_id: string;
-      skill_name: string;
-      skill_level: string;
+  if (shareSkills.length === 0) {
+    return [];
+  }
 
-      availability_status: string | null;
-      available_from: string | null;
-      available_until: string | null;
+  const profiles = new Map(
+    (params.profiles ?? []).map((profile) => [
+      profile.id,
+      profile,
+    ]),
+  );
 
-      reliability_score: number | null;
+  const reliabilityRows =
+    await db.userReliability.findMany({
+      where: {
+        userId: {
+          in: [
+            ...new Set(
+              shareSkills.map(
+                (skill) => skill.userId,
+              ),
+            ),
+          ],
+        },
+      },
+      select: {
+        userId: true,
+        reliabilityScore: true,
+      },
+    });
 
-      rating_avg: number | null;
-      rating_count: number | null;
-    }>
-  >`
-    SELECT
-      u.id AS user_id,
+  const reliabilityMap = new Map(
+    reliabilityRows.map((row) => [
+      row.userId,
+      Number(row.reliabilityScore ?? 90),
+    ]),
+  );
 
-      COALESCE(
-        u.raw_user_meta_data ->> 'full_name',
-        split_part(COALESCE(u.email, ''), '@', 1),
-        'LearnX User'
-      ) AS full_name,
+  const availabilityRows =
+    await db.userAvailability.findMany({
+      where: {
+        userId: {
+          in: [
+            ...new Set(
+              shareSkills.map(
+                (skill) => skill.userId,
+              ),
+            ),
+          ],
+        },
+      },
+      select: {
+        userId: true,
+        status: true,
+        availableFrom: true,
+        availableUntil: true,
+      },
+    });
 
-      u.raw_user_meta_data ->> 'profile_photo_url'
-        AS profile_photo,
+  const availabilityMap = new Map(
+    availabilityRows.map((row) => [
+      row.userId,
+      row,
+    ]),
+  );
 
-      u.raw_user_meta_data ->> 'city'
-        AS city,
+  const reviewRows =
+    await db.sessionReview.groupBy({
+      by: ["reviewedUserId"],
+      where: {
+        reviewedUserId: {
+          in: [
+            ...new Set(
+              shareSkills.map(
+                (skill) => skill.userId,
+              ),
+            ),
+          ],
+        },
+      },
+      _avg: {
+        rating: true,
+      },
+      _count: {
+        id: true,
+      },
+    });
 
-      u.raw_user_meta_data ->> 'state'
-        AS state,
+  const reviewMap = new Map(
+    reviewRows.map((row) => [
+      row.reviewedUserId,
+      {
+        avg: Number(row._avg.rating ?? 5),
+        count: Number(row._count.id ?? 0),
+      },
+    ]),
+  );
 
-      COALESCE(
-        u.raw_user_meta_data ->> 'preferred_language',
-        'English'
-      ) AS preferred_language,
-
-      u.raw_user_meta_data ->> 'bio'
-        AS bio,
-
-      s.id AS skill_id,
-
-      s.name AS skill_name,
-
-      us.skill_level,
-
-      COALESCE(
-        ua.status,
-        'INACTIVE'
-      ) AS availability_status,
-
-      COALESCE(
-        ua.available_from::text,
-        '17:00:00'
-      ) AS available_from,
-
-      COALESCE(
-        ua.available_until::text,
-        '21:00:00'
-      ) AS available_until,
-
-      COALESCE(
-        ur.reliability_score,
-        90
-      ) AS reliability_score,
-
-      COALESCE(
-        AVG(sr.rating),
-        5.0
-      ) AS rating_avg,
-
-      COUNT(sr.id) AS rating_count
-
-    FROM public.user_skills us
-
-    INNER JOIN auth.users u
-      ON u.id = us.user_id
-
-    INNER JOIN public.skills s
-      ON s.id = us.skill_id
-
-    LEFT JOIN public.user_availability ua
-      ON ua.user_id = u.id
-
-    LEFT JOIN public.user_reliability ur
-      ON ur.user_id = u.id
-
-    LEFT JOIN public.session_reviews sr
-      ON sr.reviewed_user_id = u.id
-
-    WHERE
-      us.skill_type = 'SHARE'
-
-      AND u.id <> ${params.learner_id}
-
-      AND COALESCE(
-        (u.raw_user_meta_data ->> 'is_active')::boolean,
-        true
-      ) = true
-
-      AND s.is_active = true
-
-      ${
-        params.skill_id
-          ? Prisma.sql`
-              AND s.id = ${params.skill_id}
-            `
-          : Prisma.empty
-      }
-
-      ${
-        params.skill_name
-          ? Prisma.sql`
-              AND LOWER(s.name) =
-                  LOWER(${params.skill_name})
-            `
-          : Prisma.empty
-      }
-
-      ${
-        !params.skill_id &&
-        !params.skill_name &&
-        learnerSkillIds.length > 0
-          ? Prisma.sql`
-              AND s.id IN (
-                ${Prisma.join(learnerSkillIds)}
-              )
-            `
-          : Prisma.empty
-      }
-
-    GROUP BY
-      u.id,
-      u.email,
-      u.raw_user_meta_data,
-      s.id,
-      s.name,
-      us.skill_level,
-      ua.status,
-      ua.available_from,
-      ua.available_until,
-      ur.reliability_score
-
-    ORDER BY
-      s.name ASC,
-      full_name ASC
-  `;
-
-  // 4. Calculate match scores
   const candidates: MatchCandidate[] = [];
 
-  for (const row of rows) {
-    const availabilityStatus = String(
-      row.availability_status ?? "INACTIVE",
+  for (const row of shareSkills) {
+    if (row.userId === params.learner_id) {
+      continue;
+    }
+
+    if (!row.skill.isActive) {
+      continue;
+    }
+
+    const profile = profiles.get(row.userId);
+
+    /*
+     * Only registered users that were returned
+     * by Supabase Auth are valid sharers.
+     */
+    if (!profile) {
+      continue;
+    }
+
+    const metadata =
+      profile.user_metadata ?? {};
+
+    /*
+     * Only Knowledge Sharers / Mentors
+     * should appear in Explore Sharers.
+     */
+    const role = String(
+      metadata.role ?? "",
     );
 
-    const availableFrom = String(
-      row.available_from ?? "17:00:00",
-    );
+    if (
+      role !== "KNOWLEDGE_SHARER" &&
+      role !== "MENTOR"
+    ) {
+      continue;
+    }
 
-    const availableUntil = String(
-      row.available_until ?? "21:00:00",
-    );
+    if (
+      metadata.is_active === false
+    ) {
+      continue;
+    }
 
-    const reliabilityScore = Number(
-      row.reliability_score ?? 90,
-    );
+    const availability =
+      availabilityMap.get(row.userId);
+
+    const availabilityStatus =
+      String(
+        availability?.status ??
+          "INACTIVE",
+      );
+
+    const availableFrom =
+      availability?.availableFrom
+        ? String(
+            availability.availableFrom,
+          )
+        : "17:00:00";
+
+    const availableUntil =
+      availability?.availableUntil
+        ? String(
+            availability.availableUntil,
+          )
+        : "21:00:00";
+
+    const reliabilityScore =
+      reliabilityMap.get(
+        row.userId,
+      ) ?? 90;
 
     const trustScore = Math.min(
       100,
@@ -483,47 +519,52 @@ export async function computeMatches(
       ),
     );
 
-    const verificationLevel =
-      "COMMUNITY_VERIFIED";
+    const review =
+      reviewMap.get(row.userId);
 
-    const ratingAvg = Number(
-      row.rating_avg ?? 5,
-    );
+    const ratingAvg =
+      review?.avg ?? 5;
 
-    const ratingCount = Number(
-      row.rating_count ?? 0,
-    );
+    const ratingCount =
+      review?.count ?? 0;
 
     const skillLevel = String(
-      row.skill_level ?? "BEGINNER",
+      row.skillLevel ??
+        "BEGINNER",
     );
 
     const learnerLevel =
-      learnerSkillLevels.get(row.skill_id);
+      learnerSkillLevels.get(
+        row.skillId,
+      );
 
     let score = 70;
 
-    // Exact skill match
+    /*
+     * Exact learner skill overlap.
+     */
     if (
-      !params.skill_id &&
-      !params.skill_name &&
-      learnerSkillIds.includes(row.skill_id)
+      learnerSkillIds.includes(
+        row.skillId,
+      )
     ) {
       score += 10;
     }
 
-    // Availability
-    if (availabilityStatus === "ACTIVE") {
+    if (
+      availabilityStatus ===
+      "ACTIVE"
+    ) {
       score += 12;
     } else if (
-      availabilityStatus === "IN_CLASS"
+      availabilityStatus ===
+      "IN_CLASS"
     ) {
       score -= 5;
     } else {
       score -= 10;
     }
 
-    // Requested time
     if (
       params.time &&
       params.time >= availableFrom &&
@@ -532,84 +573,102 @@ export async function computeMatches(
       score += 8;
     }
 
-    // Language
-    if (params.language) {
-      const profileLanguage =
-        row.preferred_language ?? "";
+    const profileLanguage =
+      String(
+        metadata.preferred_language ??
+          "English",
+      );
 
-      if (
-        profileLanguage
-          .toLowerCase()
-          .includes(
-            params.language.toLowerCase(),
-          )
-      ) {
-        score += 10;
-      }
+    if (
+      params.language &&
+      profileLanguage
+        .toLowerCase()
+        .includes(
+          params.language.toLowerCase(),
+        )
+    ) {
+      score += 10;
     }
 
-    // Skill level compatibility
     if (params.level) {
       if (
-        params.level === skillLevel
+        params.level ===
+        skillLevel
       ) {
         score += 5;
       } else if (
-        params.level === "BEGINNER" &&
+        params.level ===
+          "BEGINNER" &&
         (
-          skillLevel === "INTERMEDIATE" ||
-          skillLevel === "ADVANCED"
+          skillLevel ===
+            "INTERMEDIATE" ||
+          skillLevel ===
+            "ADVANCED"
         )
       ) {
         score += 4;
       }
     } else if (learnerLevel) {
       if (
-        learnerLevel === skillLevel
+        learnerLevel ===
+        skillLevel
       ) {
         score += 8;
       } else if (
-        learnerLevel === "BEGINNER" &&
+        learnerLevel ===
+          "BEGINNER" &&
         (
-          skillLevel === "INTERMEDIATE" ||
-          skillLevel === "ADVANCED"
+          skillLevel ===
+            "INTERMEDIATE" ||
+          skillLevel ===
+            "ADVANCED"
         )
       ) {
         score += 5;
       } else if (
-        learnerLevel === "INTERMEDIATE" &&
-        skillLevel === "ADVANCED"
+        learnerLevel ===
+          "INTERMEDIATE" &&
+        skillLevel ===
+          "ADVANCED"
       ) {
         score += 4;
       }
     }
 
-    // Trust / reliability
     const trustBonus = Math.min(
       5,
       Math.max(
         0,
-        ((trustScore - 80) / 20) * 5,
+        ((trustScore - 80) /
+          20) *
+          5,
       ),
     );
 
     score += trustBonus;
 
-    // Rating
     if (ratingAvg >= 4.5) {
       score += 2;
     }
 
-    const finalPercentage = Math.min(
-      99,
-      Math.max(
-        60,
-        Math.round(score),
-      ),
-    );
+    const finalPercentage =
+      Math.min(
+        99,
+        Math.max(
+          60,
+          Math.round(score),
+        ),
+      );
+
+    const fullName =
+      String(
+        metadata.full_name ??
+          profile.email?.split("@")[0] ??
+          "LearnX User",
+      );
 
     const reasons: string[] = [
-      `Shares ${row.skill_name} (${skillLevel})`,
+      `Shares ${row.skill.name} (${skillLevel})`,
     ];
 
     if (learnerLevel) {
@@ -619,22 +678,31 @@ export async function computeMatches(
     }
 
     if (
-      availabilityStatus === "ACTIVE"
+      availabilityStatus ===
+      "ACTIVE"
     ) {
       reasons.push(
-        `Currently Active (${availableFrom.slice(0, 5)} - ${availableUntil.slice(0, 5)})`,
+        `Currently Active (${availableFrom.slice(
+          0,
+          5,
+        )} - ${availableUntil.slice(
+          0,
+          5,
+        )})`,
       );
     }
 
-    if (row.preferred_language) {
+    if (profileLanguage) {
       reasons.push(
-        `Speaks ${row.preferred_language}`,
+        `Speaks ${profileLanguage}`,
       );
     }
 
     if (ratingAvg >= 4.5) {
       reasons.push(
-        `${ratingAvg.toFixed(1)}/5.0 Rating`,
+        `${ratingAvg.toFixed(
+          1,
+        )}/5.0 Rating`,
       );
     }
 
@@ -644,31 +712,35 @@ export async function computeMatches(
 
     candidates.push({
       user_id:
-        row.user_id,
+        row.userId,
 
       full_name:
-        row.full_name ?? "LearnX User",
+        fullName,
 
       profile_photo:
-        row.profile_photo ?? null,
+        metadata.profile_photo_url ??
+        null,
 
       city:
-        row.city ?? null,
+        metadata.city ??
+        null,
 
       state:
-        row.state ?? null,
+        metadata.state ??
+        null,
 
       preferred_language:
-        row.preferred_language ?? "",
+        profileLanguage,
 
       bio:
-        row.bio ?? null,
+        metadata.bio ??
+        null,
 
       skill_id:
-        row.skill_id,
+        row.skillId,
 
       skill_name:
-        row.skill_name,
+        row.skill.name,
 
       skill_level:
         skillLevel,
@@ -689,7 +761,7 @@ export async function computeMatches(
         reliabilityScore,
 
       verification_level:
-        verificationLevel,
+        "COMMUNITY_VERIFIED",
 
       rating_avg:
         ratingAvg,
@@ -701,11 +773,12 @@ export async function computeMatches(
         finalPercentage,
 
       why_recommended:
-        `${finalPercentage}% Match: ${reasons.join(" · ")}`,
+        `${finalPercentage}% Match: ${reasons.join(
+          " · ",
+        )}`,
     });
   }
 
-  // Highest match first
   candidates.sort(
     (a, b) =>
       b.match_percentage -

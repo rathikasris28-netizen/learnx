@@ -1668,41 +1668,56 @@ apiRouter.get(
   async (req, res) => {
     const {
       profile,
+    } = auth(req);
+
+    const {
+      data: usersData,
+      error: usersError,
     } =
-      auth(req);
+      await supabaseAdmin.auth.admin.listUsers({
+        page: 1,
+        perPage: 1000,
+      });
+
+    if (usersError) {
+      return res.status(500).json({
+        error: usersError.message,
+      });
+    }
 
     const rows =
-      await computeMatches(
-        {
-          learner_id:
-            profile.id,
+      await computeMatches({
+        learner_id:
+          profile.id,
 
-          skill_id:
-            req.query.skill_id as
-              | string
-              | undefined,
+        skill_id:
+          req.query.skill_id as
+            | string
+            | undefined,
 
-          skill_name:
-            req.query.skill_name as
-              | string
-              | undefined,
+        skill_name:
+          req.query.skill_name as
+            | string
+            | undefined,
 
-          level:
-            req.query.level as
-              | string
-              | undefined,
+        level:
+          req.query.level as
+            | string
+            | undefined,
 
-          language:
-            req.query.language as
-              | string
-              | undefined,
+        language:
+          req.query.language as
+            | string
+            | undefined,
 
-          time:
-            req.query.time as
-              | string
-              | undefined,
-        }
-      );
+        time:
+          req.query.time as
+            | string
+            | undefined,
+
+        profiles:
+          usersData.users,
+      });
 
     res.json(rows);
   }
