@@ -603,65 +603,63 @@ async function register(
    */
  
   const {
-    data,
-    error,
-  } =
-    await supabaseAnon.auth.signUp({
-      email: String(
-        b.email
-      ).trim().toLowerCase(),
+  data,
+  error,
+} =
+  await supabaseAdmin.auth.admin.createUser({
+    email: String(
+      b.email
+    ).trim().toLowerCase(),
 
-      password:
-        String(b.password),
+    password:
+      String(b.password),
 
-      options: {
+    email_confirm:
+      true,
 
-        data: {
-          full_name:
-            String(
-              b.full_name
-            ).trim(),
+    user_metadata: {
+      full_name:
+        String(
+          b.full_name
+        ).trim(),
 
-          age_group:
-            b.age_group ??
-            null,
+      age_group:
+        b.age_group ??
+        null,
 
-          city:
-            b.city ??
-            null,
+      city:
+        b.city ??
+        null,
 
-          state:
-            b.state ??
-            null,
+      state:
+        b.state ??
+        null,
 
-          preferred_language:
-            b.preferred_language ??
-            'English',
+      preferred_language:
+        b.preferred_language ??
+        'English',
 
-          education_work_status:
-            b.education_work_status ??
-            null,
+      education_work_status:
+        b.education_work_status ??
+        null,
 
-          profile_photo_url:
-            b.profile_photo_url ??
-            null,
+      profile_photo_url:
+        b.profile_photo_url ??
+        null,
 
-          role,
+      role,
 
-          bio:
-            b.bio ??
-            null,
+      bio:
+        b.bio ??
+        null,
 
-          onboarding_completed:
-            false,
+      onboarding_completed:
+        false,
 
-          is_active:
-            true,
-
-          
-        },
-      },
-    });
+      is_active:
+        true,
+    },
+  });
 
   if (
     error ||
