@@ -929,7 +929,7 @@ if (process.env.NODE_ENV !== 'production') {
   });
   app.use(vite.middlewares);
 } else {
-  const distPath = path.resolve(__dirname, 'dist');
+ const distPath = path.resolve(import.meta.dirname, "dist");
   app.use(express.static(distPath));
   app.get('*', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
