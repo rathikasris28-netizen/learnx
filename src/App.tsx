@@ -13,8 +13,12 @@ import SessionsView from './components/SessionsView';
 import TermsView from './components/TermsView';
 import Footer from './components/Footer';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
 export default function App() {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('learnx_token'));
+  const [token, setToken] = useState<string | null>(
+    localStorage.getItem('learnx_token')
+  );
   const [user, setUser] = useState<any | null>(null);
   const [skills, setSkills] = useState<any[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
@@ -28,14 +32,40 @@ export default function App() {
 
   const loadAppData = async (currentToken: string) => {
     try {
-      const [meRes, skillsRes, sessionsRes, coursesRes, bootcampsRes, quizzesRes, creditsRes] = await Promise.all([
-        fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${currentToken}` } }),
-        fetch('/api/skills'),
-        fetch('/api/sessions', { headers: { 'Authorization': `Bearer ${currentToken}` } }),
-        fetch('/api/courses'),
-        fetch('/api/bootcamps'),
-        fetch('/api/quizzes'),
-        fetch('/api/credits', { headers: { 'Authorization': `Bearer ${currentToken}` } })
+      const [
+        meRes,
+        skillsRes,
+        sessionsRes,
+        coursesRes,
+        bootcampsRes,
+        quizzesRes,
+        creditsRes
+      ] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${currentToken}`
+          }
+        }),
+
+        fetch(`${API_BASE_URL}/api/skills`),
+
+        fetch(`${API_BASE_URL}/api/sessions`, {
+          headers: {
+            Authorization: `Bearer ${currentToken}`
+          }
+        }),
+
+        fetch(`${API_BASE_URL}/api/courses`),
+
+        fetch(`${API_BASE_URL}/api/bootcamps`),
+
+        fetch(`${API_BASE_URL}/api/quizzes`),
+
+        fetch(`${API_BASE_URL}/api/credits`, {
+          headers: {
+            Authorization: `Bearer ${currentToken}`
+          }
+        })
       ]);
 
       const meData = await meRes.json();
@@ -46,13 +76,33 @@ export default function App() {
       const quizzesData = await quizzesRes.json();
       const creditsData = await creditsRes.json();
 
-      if (meRes.ok) setUser(meData.user);
-      if (Array.isArray(skillsData)) setSkills(skillsData);
-      if (Array.isArray(sessionsData)) setSessions(sessionsData);
-      if (Array.isArray(coursesData)) setCourses(coursesData);
-      if (Array.isArray(bootcampsData)) setBootcamps(bootcampsData);
-      if (Array.isArray(quizzesData)) setQuizzes(quizzesData);
-      if (creditsRes.ok) setCredits(creditsData.credits);
+      if (meRes.ok) {
+        setUser(meData.user);
+      }
+
+      if (Array.isArray(skillsData)) {
+        setSkills(skillsData);
+      }
+
+      if (Array.isArray(sessionsData)) {
+        setSessions(sessionsData);
+      }
+
+      if (Array.isArray(coursesData)) {
+        setCourses(coursesData);
+      }
+
+      if (Array.isArray(bootcampsData)) {
+        setBootcamps(bootcampsData);
+      }
+
+      if (Array.isArray(quizzesData)) {
+        setQuizzes(quizzesData);
+      }
+
+      if (creditsRes.ok) {
+        setCredits(creditsData.credits);
+      }
     } catch (err) {
       console.error('Failed to load app data:', err);
     } finally {
@@ -64,10 +114,17 @@ export default function App() {
     if (token) {
       loadAppData(token);
     } else {
-      fetch('/api/skills')
-        .then(res => res.json())
-        .then(data => { if (Array.isArray(data)) setSkills(data); })
-        .catch(() => {});
+      fetch(`${API_BASE_URL}/api/skills`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setSkills(data);
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to load skills:', err);
+        });
+
       setLoading(false);
     }
   }, [token]);
@@ -166,11 +223,25 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'courses' && <CoursesView user={user} />}
-        {activeTab === 'bootcamps' && <BootcampsView user={user} />}
-        {activeTab === 'quizzes' && <QuizzesView user={user} />}
-        {activeTab === 'wallet' && <WalletView credits={credits} />}
-        {activeTab === 'terms' && <TermsView onBack={() => setActiveTab('dashboard')} />}
+        {activeTab === 'courses' && (
+          <CoursesView user={user} />
+        )}
+
+        {activeTab === 'bootcamps' && (
+          <BootcampsView user={user} />
+        )}
+
+        {activeTab === 'quizzes' && (
+          <QuizzesView user={user} />
+        )}
+
+        {activeTab === 'wallet' && (
+          <WalletView credits={credits} />
+        )}
+
+        {activeTab === 'terms' && (
+          <TermsView onBack={() => setActiveTab('dashboard')} />
+        )}
       </main>
 
       <Footer setActiveTab={setActiveTab} />
