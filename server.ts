@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { AccessToken } from 'livekit-server-sdk';
 import { GoogleGenAI } from '@google/genai';
-
+import cors from 'cors';
 dotenv.config();
 
 const { Pool } = pg;
@@ -213,6 +213,12 @@ async function initDB() {
 }
 
 const app = express();
+
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
+
 app.use(express.json({ limit: '10mb' }));
 app.get('/api/health', async (_req, res) => {
   try {
