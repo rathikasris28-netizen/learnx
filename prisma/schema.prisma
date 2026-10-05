@@ -1,0 +1,548 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Skill {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String             @unique
+  category         String
+  description      String?
+  isActive         Boolean            @default(true) @map("is_active")
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime           @default(now()) @map("updated_at") @db.Timestamptz(6)
+  certificates     Certificate[]
+  learningPaths    LearningPath[]
+  learningProgress LearningProgress[]
+  learningRequests LearningRequest[]
+  matches          Match[]
+  partnerPrograms  PartnerProgram[]
+  quizzes          Quiz[]
+  sessions         Session[]
+  skillProofs      SkillProof[]
+  userSkills       UserSkill[]
+
+  @@map("skills")
+}
+
+model UserSkill {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  skillId    String   @map("skill_id") @db.Uuid
+  skillType  String   @map("skill_type")
+  skillLevel String   @default("BEGINNER") @map("skill_level")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  skill      Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([userId, skillId, skillType])
+  @@map("user_skills")
+}
+
+model LearningRequest {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  learnerId          String    @map("learner_id") @db.Uuid
+  skillId            String    @map("skill_id") @db.Uuid
+  skillLevel         String    @default("BEGINNER") @map("skill_level")
+  preferredLanguage  String    @default("English") @map("preferred_language")
+  learningGoal       String?   @map("learning_goal")
+  preferredDate      DateTime? @map("preferred_date") @db.Date
+  preferredStartTime DateTime? @map("preferred_start_time") @db.Time(6)
+  preferredEndTime   DateTime? @map("preferred_end_time") @db.Time(6)
+  status             String    @default("OPEN")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  skill              Skill     @relation(fields: [skillId], references: [id], onUpdate: NoAction)
+  matches            Match[]
+  sessions           Session[]
+
+  @@map("learning_requests")
+}
+
+model UserAvailability {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String    @unique @map("user_id") @db.Uuid
+  status         String    @default("INACTIVE")
+  availableFrom  DateTime? @map("available_from") @db.Time(6)
+  availableUntil DateTime? @map("available_until") @db.Time(6)
+  timezone       String    @default("Asia/Kolkata")
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("user_availability")
+}
+
+model Match {
+  id                     String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  learningRequestId      String          @map("learning_request_id") @db.Uuid
+  learnerId              String          @map("learner_id") @db.Uuid
+  knowledgeSharerId      String          @map("knowledge_sharer_id") @db.Uuid
+  skillId                String          @map("skill_id") @db.Uuid
+  matchScore             Decimal         @default(0) @map("match_score") @db.Decimal(5, 2)
+  skillMatchScore        Decimal         @default(0) @map("skill_match_score") @db.Decimal(5, 2)
+  levelMatchScore        Decimal         @default(0) @map("level_match_score") @db.Decimal(5, 2)
+  languageMatchScore     Decimal         @default(0) @map("language_match_score") @db.Decimal(5, 2)
+  availabilityMatchScore Decimal         @default(0) @map("availability_match_score") @db.Decimal(5, 2)
+  status                 String          @default("PENDING")
+  createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
+  learningRequest        LearningRequest @relation(fields: [learningRequestId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  skill                  Skill           @relation(fields: [skillId], references: [id], onUpdate: NoAction)
+  sessions               Session[]
+
+  @@unique([learningRequestId, knowledgeSharerId])
+  @@map("matches")
+}
+
+model Session {
+  id                       String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  learningRequestId        String?                 @map("learning_request_id") @db.Uuid
+  matchId                  String?                 @map("match_id") @db.Uuid
+  learnerId                String                  @map("learner_id") @db.Uuid
+  knowledgeSharerId        String                  @map("knowledge_sharer_id") @db.Uuid
+  skillId                  String                  @map("skill_id") @db.Uuid
+  scheduledStart           DateTime                @map("scheduled_start") @db.Timestamptz(6)
+  scheduledEnd             DateTime                @map("scheduled_end") @db.Timestamptz(6)
+  status                   String                  @default("SCHEDULED")
+  learnerConfirmed         Boolean                 @default(false) @map("learner_confirmed")
+  knowledgeSharerConfirmed Boolean                 @default(false) @map("knowledge_sharer_confirmed")
+  sessionGoal              String?                 @map("session_goal")
+  meetingRoomId            String?                 @map("meeting_room_id")
+  notes                    String?
+  createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime                @default(now()) @map("updated_at") @db.Timestamptz(6)
+  messages                 SessionMessage[]
+  reviews                  SessionReview[]
+  learningRequest          LearningRequest?        @relation(fields: [learningRequestId], references: [id], onUpdate: NoAction)
+  match                    Match?                  @relation(fields: [matchId], references: [id], onUpdate: NoAction)
+  skill                    Skill                   @relation(fields: [skillId], references: [id], onUpdate: NoAction)
+  transactions             TimeCreditTransaction[]
+  reports                  UserReport[]
+
+  @@map("sessions")
+}
+
+model TimeCreditWallet {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  balance   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("time_credit_wallets")
+}
+
+model TimeCreditTransaction {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  amount          Int
+  transactionType String   @map("transaction_type")
+  sessionId       String?  @map("session_id") @db.Uuid
+  description     String?
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  session         Session? @relation(fields: [sessionId], references: [id], onUpdate: NoAction)
+
+  @@map("time_credit_transactions")
+}
+
+model SessionReview {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId      String   @map("session_id") @db.Uuid
+  reviewerId     String   @map("reviewer_id") @db.Uuid
+  reviewedUserId String   @map("reviewed_user_id") @db.Uuid
+  rating         Int
+  reviewText     String?  @map("review_text")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([sessionId, reviewerId])
+  @@map("session_reviews")
+}
+
+model UserReliability {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String   @unique @map("user_id") @db.Uuid
+  completedSessions Int      @default(0) @map("completed_sessions")
+  cancelledSessions Int      @default(0) @map("cancelled_sessions")
+  noShowSessions    Int      @default(0) @map("no_show_sessions")
+  reliabilityScore  Decimal  @default(100) @map("reliability_score") @db.Decimal(5, 2)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("user_reliability")
+}
+
+model Notification {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  notificationType String   @map("notification_type")
+  title            String
+  message          String
+  relatedId        String?  @map("related_id") @db.Uuid
+  isRead           Boolean  @default(false) @map("is_read")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("notifications")
+}
+
+model SkillProof {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  skillId           String    @map("skill_id") @db.Uuid
+  proofLevel        String    @default("SELF_CLAIMED") @map("proof_level")
+  status            String    @default("PENDING")
+  assessmentScore   Decimal?  @map("assessment_score") @db.Decimal(5, 2)
+  evidenceTitle     String?   @map("evidence_title")
+  evidenceUrl       String?   @map("evidence_url")
+  verifiedBy        String?   @map("verified_by") @db.Uuid
+  verificationNotes String?   @map("verification_notes")
+  verifiedAt        DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  skill             Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([userId, skillId, proofLevel])
+  @@map("skill_proofs")
+}
+
+model LearningProgress {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String    @map("user_id") @db.Uuid
+  skillId              String    @map("skill_id") @db.Uuid
+  currentLevel         String    @default("BEGINNER") @map("current_level")
+  progressPercentage   Decimal   @default(0) @map("progress_percentage") @db.Decimal(5, 2)
+  learningGoal         String?   @map("learning_goal")
+  totalSessions        Int       @default(0) @map("total_sessions")
+  completedSessions    Int       @default(0) @map("completed_sessions")
+  totalLearningMinutes Int       @default(0) @map("total_learning_minutes")
+  lastLearningAt       DateTime? @map("last_learning_at") @db.Timestamptz(6)
+  status               String    @default("ACTIVE")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  skill                Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([userId, skillId])
+  @@map("learning_progress")
+}
+
+model LearningPath {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String               @map("user_id") @db.Uuid
+  skillId            String               @map("skill_id") @db.Uuid
+  title              String
+  description        String?
+  currentLevel       String               @default("BEGINNER") @map("current_level")
+  targetLevel        String?              @map("target_level")
+  estimatedHours     Decimal?             @map("estimated_hours") @db.Decimal(6, 2)
+  progressPercentage Decimal              @default(0) @map("progress_percentage") @db.Decimal(5, 2)
+  status             String               @default("ACTIVE")
+  isAiGenerated      Boolean              @default(true) @map("is_ai_generated")
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  modules            LearningPathModule[]
+  skill              Skill                @relation(fields: [skillId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  quizzes            Quiz[]
+
+  @@map("learning_paths")
+}
+
+model LearningPathModule {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  learningPathId     String           @map("learning_path_id") @db.Uuid
+  title              String
+  description        String?
+  moduleOrder        Int              @map("module_order")
+  progressPercentage Decimal          @default(0) @map("progress_percentage") @db.Decimal(5, 2)
+  status             String           @default("LOCKED")
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+  lessons            LearningLesson[]
+  learningPath       LearningPath     @relation(fields: [learningPathId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([learningPathId, moduleOrder])
+  @@map("learning_path_modules")
+}
+
+model LearningLesson {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  moduleId         String             @map("module_id") @db.Uuid
+  title            String
+  description      String?
+  lessonOrder      Int                @map("lesson_order")
+  contentType      String             @default("TEXT") @map("content_type")
+  contentUrl       String?            @map("content_url")
+  estimatedMinutes Int?               @map("estimated_minutes")
+  isCompleted      Boolean            @default(false) @map("is_completed")
+  completedAt      DateTime?          @map("completed_at") @db.Timestamptz(6)
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime           @default(now()) @map("updated_at") @db.Timestamptz(6)
+  module           LearningPathModule @relation(fields: [moduleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([moduleId, lessonOrder])
+  @@map("learning_lessons")
+}
+
+model Quiz {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  skillId          String         @map("skill_id") @db.Uuid
+  learningPathId   String?        @map("learning_path_id") @db.Uuid
+  title            String
+  description      String?
+  difficulty       String         @default("BEGINNER")
+  passing_score    Decimal        @default(60) @db.Decimal(5, 2)
+  timeLimitMinutes Int?           @map("time_limit_minutes")
+  isAiGenerated    Boolean        @default(true) @map("is_ai_generated")
+  isActive         Boolean        @default(true) @map("is_active")
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  attempts         QuizAttempt[]
+  questions        QuizQuestion[]
+  learningPath     LearningPath?  @relation(fields: [learningPathId], references: [id], onUpdate: NoAction)
+  skill            Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("quizzes")
+}
+
+model QuizQuestion {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId        String       @map("quiz_id") @db.Uuid
+  questionText  String       @map("question_text")
+  questionType  String       @default("MCQ") @map("question_type")
+  optionA       String?      @map("option_a")
+  optionB       String?      @map("option_b")
+  optionC       String?      @map("option_c")
+  optionD       String?      @map("option_d")
+  correctAnswer String?      @map("correct_answer")
+  explanation   String?
+  topic         String?
+  difficulty    String       @default("BEGINNER")
+  questionOrder Int          @map("question_order")
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  answers       QuizAnswer[]
+  quiz          Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([quizId, questionOrder])
+  @@map("quiz_questions")
+}
+
+model QuizAttempt {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId           String       @map("quiz_id") @db.Uuid
+  userId           String       @map("user_id") @db.Uuid
+  score            Decimal      @default(0) @db.Decimal(5, 2)
+  correctAnswers   Int          @default(0) @map("correct_answers")
+  totalQuestions   Int          @default(0) @map("total_questions")
+  timeTakenSeconds Int?         @map("time_taken_seconds")
+  passed           Boolean      @default(false)
+  startedAt        DateTime     @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt      DateTime?    @map("completed_at") @db.Timestamptz(6)
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  answers          QuizAnswer[]
+  quiz             Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("quiz_attempts")
+}
+
+model QuizAnswer {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  attemptId      String       @map("attempt_id") @db.Uuid
+  questionId     String       @map("question_id") @db.Uuid
+  selectedAnswer String?      @map("selected_answer")
+  isCorrect      Boolean      @default(false) @map("is_correct")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  attempt        QuizAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  question       QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([attemptId, questionId])
+  @@map("quiz_answers")
+}
+
+model Achievement {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String            @unique
+  description      String?
+  iconName         String?           @map("icon_name")
+  requirementType  String            @map("requirement_type")
+  requirementValue Int?              @map("requirement_value")
+  isActive         Boolean           @default(true) @map("is_active")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String      @map("user_id") @db.Uuid
+  achievementId String      @map("achievement_id") @db.Uuid
+  earnedAt      DateTime    @default(now()) @map("earned_at") @db.Timestamptz(6)
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+model Certificate {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId              String    @map("user_id") @db.Uuid
+  skillId             String?   @map("skill_id") @db.Uuid
+  certificateType     String    @map("certificate_type")
+  title               String
+  issuingOrganization String    @default("LearnX") @map("issuing_organization")
+  certificateNumber   String?   @unique @map("certificate_number")
+  certificateUrl      String?   @map("certificate_url")
+  verificationUrl     String?   @map("verification_url")
+  issuedAt            DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+  expiresAt           DateTime? @map("expires_at") @db.Timestamptz(6)
+  status              String    @default("ACTIVE")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  skill               Skill?    @relation(fields: [skillId], references: [id], onUpdate: NoAction)
+
+  @@map("certificates")
+}
+
+model Partner {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationName String           @map("organization_name")
+  description      String?
+  websiteUrl       String?          @map("website_url")
+  logoUrl          String?          @map("logo_url")
+  contactEmail     String?          @map("contact_email")
+  status           String           @default("PENDING")
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+  programs         PartnerProgram[]
+
+  @@map("partners")
+}
+
+model PartnerProgram {
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partnerId            String              @map("partner_id") @db.Uuid
+  skillId              String?             @map("skill_id") @db.Uuid
+  title                String
+  description          String?
+  programType          String              @map("program_type")
+  level                String              @default("BEGINNER")
+  language             String              @default("English")
+  durationHours        Decimal?            @map("duration_hours") @db.Decimal(6, 2)
+  startDate            DateTime?           @map("start_date") @db.Timestamptz(6)
+  endDate              DateTime?           @map("end_date") @db.Timestamptz(6)
+  externalUrl          String?             @map("external_url")
+  certificateAvailable Boolean             @default(false) @map("certificate_available")
+  creditRequired       Int                 @default(0) @map("credit_required")
+  status               String              @default("DRAFT")
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  partner              Partner             @relation(fields: [partnerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  skill                Skill?              @relation(fields: [skillId], references: [id], onUpdate: NoAction)
+  enrollments          ProgramEnrollment[]
+
+  @@map("partner_programs")
+}
+
+model ProgramEnrollment {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId          String         @map("program_id") @db.Uuid
+  userId             String         @map("user_id") @db.Uuid
+  status             String         @default("ENROLLED")
+  progressPercentage Decimal        @default(0) @map("progress_percentage") @db.Decimal(5, 2)
+  enrolledAt         DateTime       @default(now()) @map("enrolled_at") @db.Timestamptz(6)
+  completedAt        DateTime?      @map("completed_at") @db.Timestamptz(6)
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  program            PartnerProgram @relation(fields: [programId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([programId, userId])
+  @@map("program_enrollments")
+}
+
+model UserBlock {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  blockerId     String   @map("blocker_id") @db.Uuid
+  blockedUserId String   @map("blocked_user_id") @db.Uuid
+  reason        String?
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([blockerId, blockedUserId])
+  @@map("user_blocks")
+}
+
+model UserReport {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reporterId     String           @map("reporter_id") @db.Uuid
+  reportedUserId String?          @map("reported_user_id") @db.Uuid
+  sessionId      String?          @map("session_id") @db.Uuid
+  reportType     String           @map("report_type")
+  description    String
+  status         String           @default("OPEN")
+  adminNotes     String?          @map("admin_notes")
+  resolvedBy     String?          @map("resolved_by") @db.Uuid
+  resolvedAt     DateTime?        @map("resolved_at") @db.Timestamptz(6)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+  evidence       ReportEvidence[]
+  session        Session?         @relation(fields: [sessionId], references: [id], onUpdate: NoAction)
+
+  @@map("user_reports")
+}
+
+model ReportEvidence {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId    String     @map("report_id") @db.Uuid
+  fileUrl     String     @map("file_url")
+  fileType    String?    @map("file_type")
+  description String?
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  report      UserReport @relation(fields: [reportId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("report_evidence")
+}
+
+model AdminAction {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  adminId      String   @map("admin_id") @db.Uuid
+  actionType   String   @map("action_type")
+  targetUserId String?  @map("target_user_id") @db.Uuid
+  targetId     String?  @map("target_id") @db.Uuid
+  notes        String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("admin_actions")
+}
+
+model PlatformSetting {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  settingKey   String   @unique @map("setting_key")
+  settingValue String?  @map("setting_value")
+  description  String?
+  updatedBy    String?  @map("updated_by") @db.Uuid
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("platform_settings")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model LearnX {
+  id String?
+
+  @@map("LearnX")
+  @@ignore
+}
+
+model SessionMessage {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId String   @map("session_id") @db.Uuid
+  senderId  String   @map("sender_id") @db.Uuid
+  message   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([sessionId, createdAt])
+  @@map("session_messages")
+}
