@@ -1,0 +1,6 @@
+{
+  "name": "LearnX",
+  "description": "Exchange. Learn. Grow. Peer-to-peer skill sharing, mentor matching, live sessions, courses, bootcamps, quizzes, and Time Credit system.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
